@@ -1,0 +1,36 @@
+{
+  "name": "@figs-so/cli",
+  "version": "0.1.13",
+  "description": "Figs CLI — publish your AI agent's state to Figs (figs.so). Run by the agent.",
+  "type": "module",
+  "bin": {
+    "figs": "./figs.mjs"
+  },
+  "files": [
+    "figs.mjs",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "figs",
+    "ai-agents",
+    "agent",
+    "cli"
+  ],
+  "license": "MIT",
+  "homepage": "https://figs.so",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/figs-so/figs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/figs-so/figs/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
