@@ -212,9 +212,9 @@ function cmpSemver(a, b) {
   return 0
 }
 /**
- * Cached (daily) version check — off the hot path. Warns when behind `latest`;
- * `hardFail` exits when below the compatible `min`. Network failure is ignored
- * (never blocks on a transient outage).
+ * Cached (daily) compatibility check — off the hot path. `hardFail` exits when
+ * below the server's compatible `min`. Network failure is ignored (never blocks
+ * on a transient outage).
  */
 async function checkVersion({ force = false, hardFail = false } = {}) {
   const cachePath = join(globalDir, "version-check.json")
@@ -233,14 +233,11 @@ async function checkVersion({ force = false, hardFail = false } = {}) {
     }
   }
   const min = info?.cli?.min
-  const latest = info?.cli?.latest
   // cmpSemver returns null on an unparseable version → skip (never fail closed).
   if (min && cmpSemver(VERSION, min) === -1) {
     const msg = `figs CLI ${VERSION} is below the minimum ${min} — upgrade: npx @figs-so/cli@latest`
     if (hardFail) die(msg)
     console.warn(`figs: ! ${msg}`)
-  } else if (latest && cmpSemver(VERSION, latest) === -1) {
-    console.warn(`figs: a newer CLI is available (${latest}) — npx @figs-so/cli@latest`)
   }
 }
 
