@@ -38,7 +38,12 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 
-const VERSION = "0.1.13"
+// Single source of truth for the version: package.json (shipped alongside this
+// file in the published package). One edit keeps `figs version`, the floor
+// check, and the npm package in lockstep.
+const VERSION = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+).version
 // Going-forward default; override with FIGS_ENDPOINT or .figs/config.json endpoint
 // (e.g. FIGS_ENDPOINT=http://localhost:3000 for local dev).
 const DEFAULT_ENDPOINT = "https://app.figs.so"

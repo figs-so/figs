@@ -30,6 +30,22 @@ The baked default endpoint is `https://app.figs.so`.
 - Keep `SPEC.md` minimal and explicitly versioned.
 - Match the surrounding style; be kind in reviews and issues.
 
+## Releasing (`@figs-so/cli`)
+
+Publishing is automated by `.github/workflows/publish.yml` — maintainers don't run `npm publish` by hand.
+
+1. Bump `"version"` in **`package.json`** (the single source of truth — `figs.mjs` reads it at runtime).
+   Use semver: additive = patch/minor, breaking `.figs` contract = major.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push --tags` (the tag must match `package.json`).
+3. Publish a **GitHub Release** for that tag → the workflow verifies tag == version and runs `npm publish`.
+4. On a breaking contract change, also bump `MIN_CLI` in the app's `/api/version` route
+   ([figs-so/app](https://github.com/figs-so/app)); bump `LATEST_CLI` there each release so the
+   "update available" nudge stays current.
+
+Auth is npm **Trusted Publishing** (OIDC) — no token/secret. It's configured once at
+npmjs.com → `@figs-so/cli` → Trusted Publisher (GitHub Actions · org `figs-so` · repo `figs` · workflow
+`publish.yml`). Provenance is attached automatically.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the **MIT License**.

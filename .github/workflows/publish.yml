@@ -1,0 +1,46 @@
+name: Publish to npm
+
+# Publishes @figs-so/cli when a GitHub Release is published.
+# Release flow:
+#   1. bump "version" in package.json (single source of truth — figs.mjs reads it)
+#   2. commit + tag  vX.Y.Z  (tag must match package.json version)
+#   3. publish a GitHub Release for that tag → this workflow runs `npm publish`
+#
+# Auth is npm Trusted Publishing (OIDC) — no NPM_TOKEN secret. Configure the
+# trusted publisher once at npmjs.com → @figs-so/cli → Trusted Publisher:
+#   GitHub Actions · org "figs-so" · repo "figs" · workflow "publish.yml".
+# Provenance is attached automatically.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for Trusted Publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1; Node 22 ships npm 10.x.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Tag must match package.json version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG=${GITHUB_REF_NAME#v}
+          echo "package.json=$PKG  tag=$TAG"
+          test "$PKG" = "$TAG" || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
+
+      # Zero-dependency CLI — nothing to install or build. OIDC handles auth.
+      - name: Publish
+        run: npm publish --access public
