@@ -90,6 +90,16 @@ that makes a fleet of agents *legible* to a whole team.
 > at fleet scale — not a tamper-proof audit trail (agent state is self-reported). We're building in the
 > open; expect rough edges and tell us where it breaks.
 
+## The Figs ecosystem
+
+Figs is one open stack in three pieces — **build → report → govern**. Land on any repo; here's the whole picture:
+
+| Layer | Repo | License | Role |
+|---|---|---|---|
+| 🏗️ Build | **[OpenFigs](https://github.com/figs-so/openfigs)** *(opening soon)* | MIT | build trustworthy back-office AI employees — conventions + skeleton, runtime-agnostic |
+| 📤 Report | **[`.figs` + CLI](https://github.com/figs-so/figs)** | MIT | the open standard an agent reports its state in — **← you're here** |
+| 👁️ Govern | **[Figs app](https://github.com/figs-so/app)** · [app.figs.so](https://app.figs.so) | AGPL-3.0 | the org chart + handoff inbox humans read |
+
 ## Run it your way
 
 - **Hosted (easiest):** [app.figs.so](https://app.figs.so) — sign in, create a workspace, push.
