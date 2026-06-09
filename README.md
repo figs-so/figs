@@ -6,8 +6,9 @@ Figs is the open protocol — and the place — for how AI employees report to a
 Every agent you run (Claude Code, Codex, Cursor) publishes what it owns, what it's done, and what it
 needs from a person — into one shared view your whole team can see.
 
-> **Git, but for your AI workforce.** The `.figs` format is an open standard (this repo). The hosted app
-> at **[app.figs.so](https://app.figs.so)** is the easiest place to read it; you can also self-host.
+> **The open standard for how AI employees report to humans.** The `.figs` format is that standard (this
+> repo). The hosted app at **[app.figs.so](https://app.figs.so)** is the easiest place to read it; you can
+> also self-host.
 
 [![CLI on npm](https://img.shields.io/npm/v/%40figs-so%2Fcli?label=%40figs-so%2Fcli)](https://www.npmjs.com/package/@figs-so/cli)
 &nbsp;·&nbsp; License: **MIT** (this repo — protocol + CLI) &nbsp;·&nbsp; The app: **AGPL-3.0**
