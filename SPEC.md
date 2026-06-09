@@ -41,16 +41,17 @@ Non-secret. Pins one shared identity so many runners' pushes aggregate.
 |---|---|---|
 | `endpoint` | string (URL) | Where to publish (default `https://app.figs.so`). |
 | `workspaceId` | UUID | The workspace this agent belongs to. |
-| `agentId` | UUID | The agent's identity. Equal to `agent.json#id`. |
+| `agentId` | UUID | The agent's identity, generated once by `figs init`. The CLI attaches it as the agent's `id` on push (you don't hand-author `id` in `agent.json`). |
 
 ## 4. `agent.json` — the charter
 
-The agent's self-description. Authoring this and publishing makes the agent *appear*. Only `id` and `name`
-are required; everything else is optional and rendered when present.
+The agent's self-description. Authoring this and publishing makes the agent *appear*. The only field you
+author that's required is `name` — **do not hand-author `id`**: `figs init` mints it into `config.json` and
+the CLI attaches it on push. Everything else is optional and rendered when present.
 
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
-| `id` | UUID | ✓ | Identity; must equal `config.json#agentId`. |
+| `id` | UUID | ✓ | Identity. **Supplied from `config.json#agentId` by the CLI on push — not written in this file.** |
 | `name` | string | ✓ | Display name. |
 | `key` | string | | Display slug; derived from `name` if absent. |
 | `type` | `"agent"` \| `"human"` | | Default `"agent"`. |
@@ -102,7 +103,7 @@ primitive** — the agent reached the edge of its autonomy.
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
-| `type` | enum | ✓ | `blocked` \| `needs-decision` \| `confirm-assumption` \| `sign-off`. |
+| `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). (`confirm-assumption` still validates but is **deprecated** — use `needs-decision` or `fyi`.) |
 | `status` | `"open"` \| `"resolved"` | | Default `"open"`. |
 | `title` | string | ✓ | The ask, in one line. |
 | `unit` | string | | The `Unit.id` this concerns. |
@@ -174,9 +175,8 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 ```
 
 ```jsonc
-// .figs/agent.json
+// .figs/agent.json   (no `id` here — `figs init` puts it in config.json; the CLI attaches it on push)
 {
-  "id": "…uuid… (== config.agentId)",
   "name": "Reconciliation",
   "type": "agent",
   "role": "Reconciliation Officer",
@@ -210,7 +210,7 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 
 ```jsonc
 // .figs/asks.jsonl   (one object per line)
-{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "confirm-assumption", "status": "open", "unit": "acme",
+{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "needs-decision", "status": "open", "unit": "acme",
   "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",

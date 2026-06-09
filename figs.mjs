@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { randomUUID } from "node:crypto"
 
 // Single source of truth for the version: package.json (shipped alongside this
@@ -85,11 +85,13 @@ const COMMANDS = {
     eg: "figs workspaces",
   },
   init: {
-    args: "--workspace <slug-or-id> [--endpoint <url>]",
+    args: "[--workspace <slug-or-id>] [--endpoint <url>]",
     flags: ["--workspace", "--endpoint"],
-    desc: "set up .figs/ here (identity UUID + config + pointer GUIDE.md)",
+    desc: "scaffold .figs/ here (identity + charter/contract/guide templates)",
     more: [
       "--workspace takes a slug (resolved to its UUID) or a raw UUID — get it from `figs workspaces`.",
+      "Omit --workspace and (logged in) it lists your workspaces so you can re-run with the right one.",
+      "Never clobbers: an existing agent.json / CONTRACT.md / GUIDE.md / outbox is left exactly as-is.",
     ],
     eg: "figs init --workspace acme-corp",
   },
@@ -512,18 +514,91 @@ are a gitignored outbox. The token is the human's job — never generate one you
 `
 }
 
-async function init() {
-  const workspaceArg = flag("--workspace")
-  if (!workspaceArg) {
-    die("usage: figs init --workspace <slug-or-id> [--endpoint <url>]")
-  }
-  const endpoint = (flag("--endpoint") || resolveEndpoint()).replace(/\/+$/, "")
+/**
+ * A starter `agent.json` — written by `figs init` only when none exists. The
+ * `<…>` values are placeholders the agent fills in by reading its own repo;
+ * `figs doctor` refuses to bless a charter that still has them. `name` defaults
+ * to the folder name (a sensible first guess), `id` is intentionally absent —
+ * the CLI attaches the identity UUID from config.json on push.
+ */
+function agentJsonStub(name) {
+  return (
+    JSON.stringify(
+      {
+        name,
+        role: "<one line — what you are>",
+        status: "in_dev",
+        mandate: "<one sentence — what you are accountable for>",
+        org: { department: "<your team / department>" },
+        runtime: "<what runs you, e.g. Claude Code>",
+        cadence: "<on-demand · weekly · monthly · …>",
+        responsibilities: ["<an area of work you own — list a few, or use steps>"],
+        properties: [{ k: "<fact>", v: "<value>" }],
+      },
+      null,
+      2,
+    ) + "\n"
+  )
+}
 
-  // A UUID is the canonical workspace id (used as-is, no network). A slug is the
-  // human-friendly handle — resolve it to its UUID via the API, and store the
-  // UUID so a later workspace rename can't break this agent's pushes.
-  let workspaceId = workspaceArg
-  if (!isUuid(workspaceArg)) {
+/** A starter activity contract — written by `figs init` only when none exists. */
+function contractStub(name) {
+  return `# Activity contract — ${name} on Figs
+
+What this agent surfaces to Figs vs. holds back. **Agree it with your user** — this is the
+deliberate Activity step, not something to do mechanically. See \`.figs/GUIDE.md\` for the why.
+
+> **Maintain:** edit when the surfacing agreement changes (a new stream, a sensitivity change).
+> Keep it honest to what you actually push.
+
+## What I surface
+
+| Stream | Surface? | Content |
+|--------|----------|---------|
+| **runs** | <yes/no> | one line per run — what I did, de-identified scope, the headline result + status. |
+| **artifacts** | <yes/no> | the report(s) a run produced. |
+| **asks** | when real | genuine blockers / decisions / sign-offs / FYIs for my manager. 0 is a fine number. |
+
+## What I never surface
+
+Raw user content — ever. Plus, for this agent: <anything sensitive to its domain>. Use
+**de-identified labels** (\`<scope>-01\`), never customer or system names.
+`
+}
+
+/**
+ * Find string values still left as `<…>` template placeholders, with their JSON
+ * path. Used by `figs doctor` to block publishing a half-filled charter. Matches
+ * a value that is *entirely* a placeholder (e.g. "<one line — what you are>") so
+ * real content containing stray angle brackets isn't flagged.
+ */
+function findPlaceholders(obj) {
+  const out = []
+  const walk = (v, path) => {
+    if (typeof v === "string") {
+      if (/^<.*>$/.test(v.trim())) out.push({ path: path || "(root)", value: v })
+    } else if (Array.isArray(v)) {
+      v.forEach((x, i) => walk(x, `${path}[${i}]`))
+    } else if (v && typeof v === "object") {
+      for (const [k, x] of Object.entries(v)) walk(x, path ? `${path}.${k}` : k)
+    }
+  }
+  walk(obj, "")
+  return out
+}
+
+/**
+ * Resolve which workspace this `.figs/` belongs to. `--workspace` is optional:
+ *  - given a UUID  → use it as-is (no network).
+ *  - given a slug  → resolve to its UUID via the API (needs auth).
+ *  - omitted       → reuse the one already in config.json (idempotent re-init),
+ *                    else list the user's workspaces and have them re-run with one
+ *                    (the agent drives the choice — we never silently pick).
+ * Returns the workspace UUID, or exits with an actionable message.
+ */
+async function resolveWorkspaceId(workspaceArg, endpoint) {
+  if (workspaceArg) {
+    if (isUuid(workspaceArg)) return workspaceArg
     if (!getToken()) {
       die("not logged in — run `figs login` first (resolving a workspace slug needs auth; or pass the workspace UUID)")
     }
@@ -533,12 +608,36 @@ async function init() {
     }
     const list = r.data.workspaces ?? []
     const match = list.find((w) => w.slug === workspaceArg || w.id === workspaceArg)
-    if (!match) {
-      die(`no workspace matching "${workspaceArg}" — run \`figs workspaces\` to see yours`)
-    }
-    workspaceId = match.id
+    if (!match) die(`no workspace matching "${workspaceArg}" — run \`figs workspaces\` to see yours`)
+    return match.id
   }
 
+  // No --workspace: a re-init keeps the workspace already on file.
+  const existing = readJson(join(repoDir, "config.json"), null)
+  if (existing?.workspaceId) return existing.workspaceId
+
+  // First-time init with no workspace named — list them so the agent can re-run.
+  if (!getToken()) {
+    die("which workspace? run `figs login` first so I can list them, then `figs init --workspace <slug>` (or pass a workspace UUID directly)")
+  }
+  const r = await request("GET", "/api/workspaces", null, getToken())
+  if (!r.ok) die(`could not list workspaces (${r.status}): ${r.data.error ?? r.data.raw ?? ""}`)
+  const list = r.data.workspaces ?? []
+  if (list.length === 0) {
+    die(`no workspaces yet — create one at ${endpoint}, then re-run \`figs init --workspace <slug>\``)
+  }
+  console.log("figs: which workspace? re-run init with one of these:")
+  for (const w of list) console.log(`        figs init --workspace ${w.slug}   (${w.name})`)
+  process.exit(1)
+}
+
+async function init() {
+  const endpoint = (flag("--endpoint") || resolveEndpoint()).replace(/\/+$/, "")
+  const workspaceId = await resolveWorkspaceId(flag("--workspace"), endpoint)
+
+  // config.json (identity + destination) is always (re)written — it's the one
+  // file the CLI owns. A re-init reuses the existing identity UUID so every
+  // runner of this repo pushes to the same agent.
   const existing = readJson(join(repoDir, "config.json"), null)
   const agentId = existing?.agentId || randomUUID()
   mkdirSync(repoDir, { recursive: true })
@@ -546,48 +645,87 @@ async function init() {
     join(repoDir, "config.json"),
     JSON.stringify({ endpoint, workspaceId, agentId }, null, 2) + "\n",
   )
-  // Commit config.json + agent.json (identity + charter); the activity files
-  // are a transient outbox — emitted per run, aggregated remotely.
-  const giPath = join(repoDir, ".gitignore")
-  if (!existsSync(giPath)) {
-    writeFileSync(
-      giPath,
-      [
-        "# Figs — commit config.json + agent.json + CONTRACT.md + GUIDE.md.",
-        "# Activity is a transient outbox: emitted per run, aggregated remotely.",
-        "runs.jsonl",
-        "asks.jsonl",
-        "artifacts/",
-        "credentials.json",
-        "",
-      ].join("\n"),
-    )
+
+  // Everything else is scaffolded create-if-missing — `figs init` gives a fresh
+  // repo a complete, ready-to-fill `.figs/`, and never clobbers an agent's
+  // authored charter/contract/guide or its activity outbox.
+  const created = []
+  const ensure = (rel, contents) => {
+    const p = join(repoDir, rel)
+    if (existsSync(p)) return false
+    writeFileSync(p, contents)
+    created.push(rel)
+    return true
   }
-  writeFileSync(join(repoDir, "GUIDE.md"), guideStub(endpoint))
+  ensure(
+    ".gitignore",
+    [
+      "# Figs — commit config.json + agent.json + CONTRACT.md + GUIDE.md.",
+      "# Activity is a transient outbox: emitted per run, aggregated remotely.",
+      "runs.jsonl",
+      "asks.jsonl",
+      "artifacts/",
+      "credentials.json",
+      "",
+    ].join("\n"),
+  )
+  ensure("GUIDE.md", guideStub(endpoint))
+  const name = basename(process.cwd())
+  const charterCreated = ensure("agent.json", agentJsonStub(name))
+  ensure("CONTRACT.md", contractStub(name))
+  ensure("runs.jsonl", "")
+  ensure("asks.jsonl", "")
+  mkdirSync(join(repoDir, "artifacts"), { recursive: true })
 
   console.log(
-    `figs: ✓ .figs/config.json + .gitignore + GUIDE.md written (agentId ${agentId})`,
+    `figs: ✓ .figs/ ready — config.json written (agentId ${agentId}, workspace ${workspaceId})`,
   )
+  if (created.length) console.log(`        scaffolded: ${created.join(", ")}`)
+  if (charterCreated) {
+    console.log(
+      "        Phase 1: fill in .figs/agent.json — it's a template; replace the <…> placeholders",
+    )
+    console.log(
+      "        (`figs doctor` flags any you miss), then `figs doctor` && `figs push` to appear.",
+    )
+  } else {
+    console.log(
+      "        Your charter (.figs/agent.json) is already here — `figs doctor` && `figs push` to publish.",
+    )
+  }
   console.log(
-    `        Phase 1: author .figs/agent.json (your charter), then \`figs doctor\` && \`figs push\` to appear.`,
+    "        Anchor Figs in the file you load every session (CLAUDE.md/AGENTS.md/…): paste the",
   )
+  console.log(`        figs:begin block from ${endpoint}/llms.txt, or future sessions forget Figs.`)
   console.log(
-    `        Then anchor Figs in the instruction file you load every session (CLAUDE.md/AGENTS.md/…) — see /llms.txt; without it, future sessions forget Figs.`,
+    "        Commit config.json + agent.json + CONTRACT.md + GUIDE.md; never commit credentials.json.",
   )
   console.log(`        Full guide: ${endpoint}/llms.txt`)
 }
 
 /** Validate the local .figs/ payload against the contract — no write. */
 async function doctor() {
-  if (!getToken()) die("not logged in — run `figs login`")
-  if (!existsSync(repoDir)) die("no .figs/ here — run `figs init --workspace <id>` first")
+  // Local checks first (no token/network needed) — fail fast and offline.
+  if (!existsSync(repoDir)) die("no .figs/ here — run `figs init` first")
   const config = readJson(join(repoDir, "config.json"), {})
   if (!config.workspaceId || !config.agentId) {
-    die("config missing workspaceId/agentId — run `figs init --workspace <id>`")
+    die("config missing workspaceId/agentId — run `figs init`")
   }
   const agentJson = readJson(join(repoDir, "agent.json"), null)
   if (!agentJson) die("missing .figs/agent.json — author it first (see .figs/GUIDE.md)")
 
+  // Refuse to bless a charter that still has `<…>` template placeholders — `figs
+  // init` scaffolds them, and pushing them would publish "<one line — what you
+  // are>" to the org chart. This is the "not ready to push" signal.
+  const placeholders = findPlaceholders(agentJson)
+  if (placeholders.length) {
+    console.log("figs: ✗ .figs/agent.json still has template placeholders — fill these in before pushing:")
+    for (const p of placeholders) console.log(`  ${p.path}: ${p.value}`)
+    console.log("  (replace the <…> values by reading your own repo, then re-run `figs doctor`)")
+    process.exit(1)
+  }
+
+  if (!getToken()) die("not logged in — run `figs login`")
   const r = await api("POST", "/api/validate", {
     workspaceId: config.workspaceId,
     agent: { ...agentJson, id: config.agentId },
@@ -618,11 +756,11 @@ async function push() {
   if (!token) die("not logged in — run `figs login` (or set FIGS_TOKEN)")
   await checkVersion({ hardFail: true })
   if (!existsSync(repoDir)) {
-    die("no .figs/ here — run `figs init --workspace <id>` first")
+    die("no .figs/ here — run `figs init` first")
   }
   const config = readJson(join(repoDir, "config.json"), {})
   if (!config.workspaceId || !config.agentId) {
-    die("config missing workspaceId/agentId — run `figs init --workspace <id>`")
+    die("config missing workspaceId/agentId — run `figs init`")
   }
   const endpoint =
     process.env.FIGS_ENDPOINT || config.endpoint || DEFAULT_ENDPOINT

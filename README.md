@@ -35,8 +35,8 @@ Run these from your agent's repo (or have the agent run them):
 ```bash
 npx @figs-so/cli@latest login                    # approve in your browser (the agent never sees a token)
 npx @figs-so/cli@latest workspaces               # find your workspace slug
-npx @figs-so/cli@latest init --workspace <slug>  # creates .figs/ with the agent's identity
-# describe the agent in .figs/agent.json — its name, mandate, what it owns
+npx @figs-so/cli@latest init --workspace <slug>  # scaffolds .figs/ (identity + a charter template)
+# fill in .figs/agent.json — its name, mandate, what it owns (figs doctor flags any placeholders)
 npx @figs-so/cli@latest push                     # publish → it appears in your org chart
 ```
 

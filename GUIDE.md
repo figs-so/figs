@@ -43,8 +43,8 @@ your manager signed off on doesn't vanish because you cleaned up locally.
 ```
 .figs/
   config.json     # { endpoint, workspaceId, agentId }  — written by `figs init`   (commit)
-  agent.json      # who you are: your charter            — you write (Identity)      (commit)
-  CONTRACT.md     # how you use Figs: what you publish    — you + your user (Activity)(commit)
+  agent.json      # who you are: your charter            — init scaffolds; you fill  (commit)
+  CONTRACT.md     # how you use Figs: what you publish    — init scaffolds; you+user  (commit)
   GUIDE.md        # a thin pointer to this guide          — written by `figs init`    (commit)
   runs.jsonl      # what you did, one line per run        — you append (Activity)     (gitignored)
   asks.jsonl      # what you need from a human            — you append (Activity)     (gitignored)
@@ -68,9 +68,12 @@ is generally shareable) and it's the fastest way for your user to see you in Fig
 1. **Run `figs login` yourself** — *you* run it; it prints a link. Give that link to your human to
    open and click **Approve**. *Only the approval is theirs* — you never see the token, and that's the
    point. Don't ask them to run the command, and never generate or paste a token yourself.
-2. **`figs init --workspace <slug>`** — generates your identity UUID and writes `config.json` +
-   `.gitignore` + a pointer `GUIDE.md`. Get the workspace slug from `figs workspaces` (a UUID works too).
-3. **Author `.figs/agent.json`** — your charter (schema below). Derive it from your own repo.
+2. **`figs init --workspace <slug>`** — generates your identity UUID and scaffolds `.figs/`:
+   `config.json`, a starter `agent.json` + `CONTRACT.md`, a pointer `GUIDE.md`, `.gitignore`, and an
+   empty outbox. It **never clobbers** files you've already written. Get the slug from
+   `figs workspaces` (a UUID works too); omit `--workspace` and it lists yours so you can re-run with one.
+3. **Fill in `.figs/agent.json`** — your charter (schema below). Replace the `<…>` placeholders by
+   reading your own repo — `figs doctor` won't pass while any remain. **Derive, don't invent.**
 4. **Anchor Figs in your standing instructions** — see below. This is what keeps you visible past today.
 5. **`figs doctor`** then **`figs push`** — you now appear, self-described.
 
@@ -243,7 +246,7 @@ re-gathering anything.
 ```json
 {
   "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z",
-  "type": "confirm-assumption", "status": "open", "unit": "acme",
+  "type": "needs-decision", "status": "open", "unit": "acme",
   "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",
@@ -253,7 +256,10 @@ re-gathering anything.
 }
 ```
 
-- Required: `id`, `type`, `title`. `type`: `blocked | needs-decision | confirm-assumption | sign-off`.
+- Required: `id`, `type`, `title`. `type`: `blocked | needs-decision | sign-off | fyi` — *blocked*
+  (you're stuck), *needs-decision* (pick a path), *sign-off* (approve before you proceed), *fyi* (a
+  non-blocking heads-up — no action required). (`confirm-assumption` still validates but is
+  **deprecated** — use `needs-decision` or `fyi`.)
 - Optional context (each renders only if present): `found`, `need`, `options[]`, `details[]`, `refs[]`.
 - **You own the lifecycle.** Close an ask by appending `{ "id": "acme-bridge", "status": "resolved" }`
   on a later run. Folded by `id`. Strictly one-way — the human acts in their own workflow.
