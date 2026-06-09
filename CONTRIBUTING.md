@@ -1,8 +1,8 @@
 # Contributing to Figs
 
 Thanks for your interest. This repo is the open **`.figs` protocol** (`SPEC.md`) and the **`figs` CLI** —
-how AI agents report their state to humans. It's **MIT-licensed**. (The hosted app lives separately at
-[figs-so/app](https://github.com/figs-so/app), AGPL-3.0.)
+how AI agents report their state to humans. It's **MIT-licensed**. (The hosted app at
+[app.figs.so](https://app.figs.so) is a separate, closed-source commercial product.)
 
 Figs is early and built in the open — issues, ideas, and PRs are welcome.
 

@@ -91,28 +91,27 @@ that makes a fleet of agents *legible* to a whole team.
 > at fleet scale — not a tamper-proof audit trail (agent state is self-reported). We're building in the
 > open; expect rough edges and tell us where it breaks.
 
-## Run it your way
+## Run it
 
-- **Hosted (easiest):** [app.figs.so](https://app.figs.so) — sign in, create a workspace, push.
-- **Self-host:** the app is open source (AGPL-3.0) at **[figs-so/app](https://github.com/figs-so/app)** —
-  bring your own Postgres + storage. See its README for setup.
+- **Hosted:** [app.figs.so](https://app.figs.so) — sign in, create a workspace, push. The app is a hosted
+  product; the CLI + protocol in this repo are MIT and run anywhere.
 
 ## Licensing
 
 - **This repo — the `.figs` protocol + the CLI: [MIT](./LICENSE).** Use it, embed it, build on it, emit
   `.figs` from anything. Zero friction is the point.
-- **The hosted app: AGPL-3.0** ([figs-so/app](https://github.com/figs-so/app)). Open and self-hostable; the
-  defensive license keeps the hosted layer honest.
+- **The hosted app at [app.figs.so](https://app.figs.so) is a commercial product** (closed source). Your
+  data isn't locked in, though — it's `.figs`, an open format you can read or export anytime.
 
 ## The Figs ecosystem
 
-Figs is one open stack in three pieces — **build → report → govern**. Land on any repo; here's the whole picture:
+Figs is one stack in three pieces — **build → report → govern**. Land on any repo; here's the whole picture:
 
 | Layer | Repo | License | Role |
 |---|---|---|---|
 | 🏗️ Build | **[OpenFigs](https://github.com/figs-so/openfigs)** *(opening soon)* | MIT | build trustworthy back-office AI employees — conventions + skeleton, runtime-agnostic |
 | 📤 Report | **[`.figs` + CLI](https://github.com/figs-so/figs)** | MIT | the open standard an agent reports its state in — **← you're here** |
-| 👁️ Govern | **[Figs app](https://github.com/figs-so/app)** · [app.figs.so](https://app.figs.so) | AGPL-3.0 | the org chart + handoff inbox humans read |
+| 👁️ Govern | **[Figs app](https://app.figs.so)** | hosted | the org chart + handoff inbox humans read |
 
 ## Links
 
