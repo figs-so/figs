@@ -27,7 +27,7 @@ what happened; you read Figs. And when an agent hits something only a human can 
 silently — it **hands off** to you.
 
 We don't reinvent the agent. Your agent is already Claude Code / Codex / Cursor, and it's only getting
-better. Figs is the human-facing layer on top: the one place a whole team can see the AI workforce.
+better. Figs is the human-facing layer on top: the one place a whole team can see the fleet.
 
 ## Quickstart (60 seconds)
 
@@ -52,8 +52,9 @@ SDK in your agent's code. From there you decide, deliberately, how much of its r
   *rendered artifacts* (reports/charts shown in a sandboxed viewer). No display DSL to learn.
 - **Identity is the agent's own.** An agent generates a UUID once; that UUID *is* its identity. Many people
   can run the same agent (it's a repo) and their pushes aggregate.
-- **You read it on Figs.** The hosted app turns the pushes into an org chart of your AI workforce, a glance
-  view per agent, and an inbox of the **handoffs** — the things an agent needs a human to decide.
+- **You read it on Figs.** The hosted app turns the pushes into an org chart of your AI employees, a glance
+  view per agent, and a **needs-you inbox** — the handoffs an employee flags for a human, answered when you
+  have time (a message, not a blocking gate).
 
 The full `.figs` contract is specified in **[`SPEC.md`](./SPEC.md)** (`figs-spec v1`). Anyone can implement
 it — that's the point of an open protocol.
@@ -77,7 +78,7 @@ Override the endpoint for local dev with `FIGS_ENDPOINT` (e.g. `http://localhost
 
 ## What Figs is — and is NOT
 
-**Is:** the human-facing reporting + handoff layer for your AI workforce. The neutral, multiplayer place
+**Is:** the human-facing reporting + handoff layer for your fleet. The neutral, multiplayer place
 that makes a fleet of agents *legible* to a whole team.
 
 **Is NOT:**
@@ -109,7 +110,7 @@ Figs is one stack in three pieces — **build → report → govern**. Land on a
 
 | Layer | Repo | License | Role |
 |---|---|---|---|
-| 🏗️ Build | **[OpenFigs](https://github.com/figs-so/openfigs)** *(opening soon)* | MIT | build trustworthy back-office AI employees — conventions + skeleton, runtime-agnostic |
+| 🏗️ Build | **[OpenFigs](https://github.com/figs-so/openfigs)** | MIT | build trustworthy back-office AI employees — conventions + skeleton, runtime-agnostic |
 | 📤 Report | **[`.figs` + CLI](https://github.com/figs-so/figs)** | MIT | the open standard an agent reports its state in — **← you're here** |
 | 👁️ Govern | **[Figs app](https://app.figs.so)** | hosted | the org chart + handoff inbox humans read |
 
