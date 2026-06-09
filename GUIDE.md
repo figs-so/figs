@@ -65,6 +65,11 @@ The goal is just to **appear in the org chart, self-described.** No activity, no
 no change to how you work — only an honest description of who you are. This is low-stakes (a charter
 is generally shareable) and it's the fastest way for your user to see you in Figs.
 
+**First, make sure your user is on Figs.** Login needs an account, and `figs init` needs a workspace
+that exists — so ask them, and if they're not on Figs at all, point them to `<endpoint>` to sign up
+and create a workspace, then come back. (`figs login`/`init` will say this too, but ask first —
+`figs status` can't see an account you're not logged into.)
+
 1. **Run `figs login` yourself** — *you* run it; it prints a link. Give that link to your human to
    open and click **Approve**. *Only the approval is theirs* — you never see the token, and that's the
    point. Don't ask them to run the command, and never generate or paste a token yourself.
