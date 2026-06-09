@@ -3,7 +3,7 @@
  * `figs` — the agent-side CLI (v1, zero-dependency).
  *
  *   figs status                         show login / workspace / agent state    [--json]
- *   figs login                          browser approve (device flow) — agent never sees the token
+ *   figs login                          opens browser to approve (device flow) — agent never sees the token
  *   figs login <token>                  fallback: save a token you pasted (~/.figs/credentials.json)
  *   figs logout                         remove the locally-saved token (~/.figs/credentials.json)
  *   figs workspaces                     list the user's workspaces               [--json]
@@ -37,6 +37,7 @@ import {
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { randomUUID } from "node:crypto"
+import { spawn } from "node:child_process"
 
 // Single source of truth for the version: package.json (shipped alongside this
 // file in the published package). One edit keeps `figs version`, the floor
@@ -72,7 +73,7 @@ const COMMANDS = {
     flags: [],
     desc: "log in — browser device-flow, or save a pasted token",
     more: [
-      "no arg → device flow: a human approves in a browser (you never see the token).",
+      "no arg → device flow: opens a browser for a human to approve (you never see the token).",
       "<token> → save a token you already have to ~/.figs/credentials.json.",
     ],
     eg: "figs login",
@@ -310,9 +311,30 @@ function saveToken(token) {
   }
 }
 
+// Best-effort: pop the approval page in the user's default browser so they only
+// have to click Approve. Silent no-op when it can't (headless / remote / CI) —
+// the link is always printed above as the fallback. Detached + unref'd so it
+// never blocks or ties the polling loop to the browser process.
+function openBrowser(url) {
+  try {
+    const [cmd, args] =
+      process.platform === "darwin"
+        ? ["open", [url]]
+        : process.platform === "win32"
+          ? ["cmd", ["/c", "start", "", url]]
+          : ["xdg-open", [url]]
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true })
+    child.on("error", () => {}) // swallow ENOENT / no opener available
+    child.unref()
+  } catch {
+    /* ignore — the printed link is the fallback */
+  }
+}
+
 /**
- * `figs login` → device flow (the human approves in a browser; the agent never
- * handles the token). `figs login <token>` → save a pasted token (fallback).
+ * `figs login` → device flow: opens the approval page in the user's browser
+ * (the printed link is the fallback); the human clicks Approve and the agent
+ * never handles the token. `figs login <token>` → save a pasted token (fallback).
  */
 async function login(token) {
   if (token) {
@@ -324,9 +346,10 @@ async function login(token) {
   const start = await request("POST", "/api/device/start")
   if (!start.ok) die(`could not start login (${start.status})`)
   const d = start.data
-  console.log("figs: to authorize this CLI, open the link and click Approve:")
-  console.log(`        ${d.verification_uri_complete}`)
+  console.log("figs: opening your browser to approve this CLI — just click Approve there.")
+  console.log(`        if it doesn't open, visit: ${d.verification_uri_complete}`)
   console.log(`        (or go to ${d.verification_uri} and enter code: ${d.user_code})`)
+  openBrowser(d.verification_uri_complete)
   console.log("figs: waiting for approval…")
 
   const deadline = Date.now() + (d.expires_in ?? 600) * 1000

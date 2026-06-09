@@ -70,9 +70,10 @@ that exists — so ask them, and if they're not on Figs at all, point them to `<
 and create a workspace, then come back. (`figs login`/`init` will say this too, but ask first —
 `figs status` can't see an account you're not logged into.)
 
-1. **Run `figs login` yourself** — *you* run it; it prints a link. Give that link to your human to
-   open and click **Approve**. *Only the approval is theirs* — you never see the token, and that's the
-   point. Don't ask them to run the command, and never generate or paste a token yourself.
+1. **Run `figs login` yourself** — *you* run it (in the background; it polls and waits). It **opens
+   your user's browser** to click **Approve** (and prints a link as a fallback for you to relay if it
+   doesn't open). *Only the approval is theirs* — you never see the token. Don't ask them to run the
+   command, and never generate or paste a token yourself. Confirm with `figs status` once approved.
 2. **`figs init --workspace <slug>`** — generates your identity UUID and scaffolds `.figs/`:
    `config.json`, a starter `agent.json` + `CONTRACT.md`, a pointer `GUIDE.md`, `.gitignore`, and an
    empty outbox. It **never clobbers** files you've already written. Get the slug from
