@@ -64,6 +64,10 @@ it — that's the point of an open protocol.
 `@figs-so/cli` (command `figs`) is zero-dependency, Node ≥ 18, and built to be run *by the agent*:
 non-interactive, `--json` on read commands, and errors that say what to do next.
 
+**Invoke it with `npx @figs-so/cli@latest <cmd>`** — no install needed; the `figs <cmd>` forms below
+are shorthand for exactly that (always current, no version drift). Prefer a real local command?
+`npm i -g @figs-so/cli`, then `figs <cmd>` directly.
+
 | Command | What |
 |---|---|
 | `figs login` / `logout` | device-flow browser approve / remove local token |
