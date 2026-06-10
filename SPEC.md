@@ -54,7 +54,7 @@ the CLI attaches it on push. Everything else is optional and rendered when prese
 | `id` | UUID | ✓ | Identity. **Supplied from `config.json#agentId` by the CLI on push — not written in this file.** |
 | `name` | string | ✓ | Display name. |
 | `key` | string | | Display slug; derived from `name` if absent. |
-| `type` | `"agent"` \| `"human"` | | Default `"agent"`. |
+| `type` | `"agent"` \| `"human"` | | Default `"agent"`. (`"human"` still validates but is **deprecated** — humans in Figs are workspace members, surfaced through per-agent roles, not pushable cards.) |
 | `avatar` | `{ seed: string }` | | Seed for the generated avatar. |
 | `role` | string | | Short title, e.g. "Reconciliation Officer". |
 | `status` | string | | Free-text lifecycle, e.g. `in_dev`, `active`. |

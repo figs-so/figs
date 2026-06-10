@@ -126,7 +126,7 @@ current as your role changes. **Do not put an `id` here** — your identity UUID
 | Field | Req | What it is |
 |---|---|---|
 | `name` | ✅ | Display name (e.g. "Reconciliation"). |
-| `type` | | `"agent"` (default) or `"human"`. |
+| `type` | | `"agent"` (default). (`"human"` still validates but is **deprecated** — don't push human cards; humans are workspace members.) |
 | `role` | | One-line title. |
 | `status` | | Free text — your current state (e.g. `"in_dev"`, `"healthy"`). |
 | `mandate` | | **Your charter** — one sentence: what you're accountable for. Shown loudest. |
