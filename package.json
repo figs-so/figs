@@ -12,6 +12,9 @@
     "SPEC.md",
     "LICENSE"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=18"
   },
