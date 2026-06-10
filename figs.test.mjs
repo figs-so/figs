@@ -234,6 +234,30 @@ test("push sends the spine to /api/ingest, folded by id", async () => {
   assert.equal(body.runs[0].result, "updated", "fold keeps the latest line")
 })
 
+test("push passes asks through verbatim — to, withdrawn, structured resolution", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a1","ts":"2026-06-10T00:00:00Z","type":"needs-decision","to":"manager","title":"Pick a path","options":["A","B"]}\n` +
+      `{"id":"a1","status":"resolved","resolution":{"chosen":"A","via":"human","by":"Sarah"}}\n` + // folds onto a1
+      `{"id":"a2","ts":"2026-06-10T01:00:00Z","type":"blocked","to":"builder","title":"Creds expired","status":"withdrawn","resolution":"creds rotated themselves"}\n`,
+  )
+  const r = await run(["push"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+
+  const byId = Object.fromEntries(mock.lastIngest.body.asks.map((a) => [a.id, a]))
+  // a1: the closing line folded onto the open ask, fields intact.
+  assert.equal(byId.a1.to, "manager")
+  assert.equal(byId.a1.status, "resolved")
+  assert.deepEqual(byId.a1.options, ["A", "B"])
+  assert.deepEqual(byId.a1.resolution, { chosen: "A", via: "human", by: "Sarah" })
+  // a2: withdrawn + bare-string resolution pass through untouched (server normalizes).
+  assert.equal(byId.a2.to, "builder")
+  assert.equal(byId.a2.status, "withdrawn")
+  assert.equal(byId.a2.resolution, "creds rotated themselves")
+})
+
 test("push hard-fails below the server's CLI floor", async () => {
   mock.versionMin = "999.0.0"
   try {

@@ -121,20 +121,53 @@ primitive** — the agent reached the edge of its autonomy.
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
 | `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). (`confirm-assumption` still validates but is **deprecated** — use `needs-decision` or `fyi`.) |
-| `status` | `"open"` \| `"resolved"` | | Default `"open"`. |
+| `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the agent un-asked — no longer needed, nobody acted). |
+| `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder` — e.g. self-edit/logic-change flags). Absent = unaddressed; readers may guess from `type` but must present it as a guess. |
 | `title` | string | ✓ | The ask, in one line. |
 | `unit` | string | | The `Unit.id` this concerns. |
 | `found` | string | | What the agent found / why it's stuck. |
 | `need` | string | | What it needs from the human. |
-| `options` | string[] | | Candidate resolutions. |
+| `options` | string[] | | Candidate resolutions — **short, stable, quotable** strings: a future answer references one *verbatim* (see [§6.2](#62-resolution--how-an-ask-closed)). |
 | `details` | `{ l, v }[]` | | Labelled facts (e.g. amount at risk). |
 | `refs` | `{ label, artifact? }[]` | | Pointers to artifacts that back the ask. |
+| `resolution` | string \| `Resolution` | | The agent's account of the close ([§6.2](#62-resolution--how-an-ask-closed)). A bare string is shorthand for `{ "note": … }`. |
 | `ts` | string (ISO-8601 w/ offset) | | |
 | `session` | `Session` | | The session that raised this ask (same shape as [§5.1](#51-session--runtime-metadata-optional)). |
 
-> In v1, an ask is **one-way**: it announces that a human is needed. Resolution happens in the agent's own
-> workflow (the agent sets `status: "resolved"` on a later push). Answers flowing *back* through Figs are
-> [reserved for a future version](#reserved-not-in-v1).
+### 6.1 Lifecycle — two ledgers, split by author
+
+An ask is the **anchor of a thread whose two halves are owned by different parties**:
+
+- **The agent's ledger** is `asks.jsonl` — only the agent writes here. Records **fold by `id`**
+  (field-level merge: later lines layer over earlier ones), so the close is an *append*, not an edit:
+
+  ```jsonc
+  { "id": "acme-bridge", "status": "resolved",
+    "resolution": { "chosen": "Strip the alpha prefix", "via": "human", "by": "Sarah (accounting)" } }
+  ```
+
+  Appending keeps the local file crash-safe, concurrency-safe (multiple runners), and an honest
+  self-audit trail; the folded record the reader stores is one complete ask.
+- **The human's ledger** is server-side — claims, answers, and verdicts born in the reader's UI.
+  These are [reserved](#reserved-not-in-v1) in v1 and **never appear in `asks.jsonl`**: nobody
+  writes into the other side's record; the two ledgers cross-reference by id.
+
+The full state machine: `open` → *(claimed → answered — human, server-side, reserved)* →
+`resolved` | `withdrawn` *(agent, in `asks.jsonl`)*. In v1 only the agent-owned transitions exist;
+resolution happens in the agent's own workflow.
+
+### 6.2 `Resolution` — how an ask closed
+
+| Field | Type | Meaning |
+|---|---|---|
+| `note` | string | The agent's one-line account of the close. |
+| `chosen` | string | The decision taken — **verbatim** one of the ask's `options[]`. |
+| `via` | `"figs"` \| `"human"` \| `"self"` | Where the unblock came from: an answer pulled from Figs (verifiable, future) · answered out-of-band (self-reported) · the blocker cleared on its own. |
+| `by` | string | Who answered, as the agent knows it (self-reported; verified attribution only exists for `via: "figs"`). |
+| `answer` | string | **Reserved** — the Figs answer-event id the agent acted on, once answer-down ships. |
+
+All fields optional; a bare-string `resolution` is shorthand for `{ "note": … }` and readers
+normalize it to the object form.
 
 ## 7. `artifacts/` — rendered files
 
@@ -184,8 +217,14 @@ account named for what it is, e.g. "Runner — analytics box"). Agents never aut
 
 Deliberately out of scope for v1, named here so implementers don't repurpose these concepts:
 
-- **Two-way / answer-down.** A human answer or sign-off flowing *back* to the agent through Figs (vs. the
-  agent resolving in its own workflow). v1 is report-only.
+- **Two-way / answer-down — thread events.** A human answer or sign-off flowing *back* to the agent
+  through Figs (vs. the agent resolving in its own workflow). v1 is report-only. The shapes are locked
+  so `options[]`/`resolution` are designed for them: server-side events keyed to the ask id —
+  `claim { by, ts }` (any workspace member: "I'm on it") · `answer { by, ts, chosen?, text? }` where
+  `chosen` verbatim-matches an `options[]` entry · `verdict { by, ts, verdict: "approved" | "rejected", text? }`
+  for sign-offs. Answers/verdicts are permission-gated to the agent's manager/builder (the injection
+  gate); delivery is **agent-pulled** (an inbox read), never pushed into the repo. Item kinds `note`
+  and `directive` (human-initiated) are named-reserved.
 - **Provenance / signing.** Cryptographic attestation that a report is complete, fresh, and untampered.
   v1 state is *self-reported*; treat it as visibility, not a tamper-evident audit trail.
 - **Per-record visibility / scoping.** v1 publishes to a workspace where all members can read everything.
@@ -235,12 +274,15 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 ```
 
 ```jsonc
-// .figs/asks.jsonl   (one object per line)
-{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "needs-decision", "status": "open", "unit": "acme",
+// .figs/asks.jsonl   (one object per line; records fold by id — the close is an append)
+{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "needs-decision", "status": "open", "to": "manager", "unit": "acme",
   "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",
   "options": [ "Strip the alpha prefix", "Use a mapping you provide", "Treat as out-of-scope" ],
   "details": [ { "l": "Amount at risk", "v": "$50.0M" } ],
   "refs": [ { "label": "Acme report", "artifact": "acme-2025-11.html" } ] }
+{ "id": "acme-bridge", "status": "resolved",
+  "resolution": { "chosen": "Strip the alpha prefix", "via": "human", "by": "Sarah (accounting)",
+                  "note": "confirmed in terminal — applied from 2025-11 onward" } }
 ```

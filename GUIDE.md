@@ -281,7 +281,7 @@ re-gathering anything.
 ```json
 {
   "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z",
-  "type": "needs-decision", "status": "open", "unit": "acme",
+  "type": "needs-decision", "status": "open", "to": "manager", "unit": "acme",
   "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",
@@ -295,11 +295,28 @@ re-gathering anything.
   (you're stuck), *needs-decision* (pick a path), *sign-off* (approve before you proceed), *fyi* (a
   non-blocking heads-up — no action required). (`confirm-assumption` still validates but is
   **deprecated** — use `needs-decision` or `fyi`.)
+- **Address it with `to`** when you know who you need: `"manager"` = the human accountable for your
+  *work* (decisions, sign-offs on output) · `"builder"` = the human who maintains *you* (you're
+  broken, credentials, **self-edit/logic-change flags**). Omit it if genuinely either — readers
+  will guess from the type, labeled as a guess.
 - Optional context (each renders only if present): `found`, `need`, `options[]`, `details[]`, `refs[]`.
-  An ask can also carry the same `session` block as a run — useful, since asks mark the moments
-  a human will want to trace.
-- **You own the lifecycle.** Close an ask by appending `{ "id": "acme-bridge", "status": "resolved" }`
-  on a later run. Folded by `id`. Strictly one-way — the human acts in their own workflow.
+  Write `options[]` as **short, stable, quotable** strings — a future answer (and your own
+  `resolution.chosen`) references one *verbatim*. An ask can also carry the same `session` block as
+  a run — useful, since asks mark the moments a human will want to trace.
+- **You own the lifecycle — close it honestly.** Append a closing line on a later run (folded by
+  `id`; never edit old lines):
+
+  ```json
+  { "id": "acme-bridge", "status": "resolved",
+    "resolution": { "chosen": "Strip the alpha prefix", "via": "human", "by": "Sarah (accounting)",
+                    "note": "confirmed in terminal" } }
+  ```
+
+  `resolution` says how it closed: `chosen` = the option taken (verbatim); `via` = `"human"`
+  (someone told you out-of-band) · `"self"` (the blocker cleared on its own) · `"figs"` (reserved
+  for answers pulled through Figs); `by` = who, as best you know. A bare string works as a
+  shorthand note. Use `"status": "withdrawn"` when the ask is simply no longer needed — don't mark
+  it resolved if nobody acted. Strictly one-way today — the human acts in their own workflow.
 
 ## `artifacts/` — your reports
 
