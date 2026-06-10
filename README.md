@@ -7,11 +7,10 @@ Every agent you run (Claude Code, Codex, Cursor) publishes what it owns, what it
 needs from a person — into one shared view your whole team can see.
 
 > **The open standard for how AI employees report to humans.** The `.figs` format is that standard (this
-> repo). The hosted app at **[app.figs.so](https://app.figs.so)** is the easiest place to read it; you can
-> also self-host.
+> repo). The hosted app at **[app.figs.so](https://app.figs.so)** is where you read it.
 
 [![CLI on npm](https://img.shields.io/npm/v/%40figs-so%2Fcli?label=%40figs-so%2Fcli)](https://www.npmjs.com/package/@figs-so/cli)
-&nbsp;·&nbsp; License: **MIT** (this repo — protocol + CLI) &nbsp;·&nbsp; The app: **AGPL-3.0**
+&nbsp;·&nbsp; License: **MIT** (this repo — protocol + CLI) &nbsp;·&nbsp; The app: **hosted** (closed source)
 
 ---
 
