@@ -333,6 +333,9 @@ workspace member.)*
 - **One-way, never deletes.** You publish; Figs mirrors. Deleting locally doesn't delete remote.
 - **You own your identity.** The UUID in `config.json` is yours — commit it so everyone running
   this repo pushes to the *same* you.
+- **Your workspace can change server-side.** A human may move you to another workspace in the app;
+  your next `figs doctor` or `figs push` then fails with the fix spelled out — update `workspaceId`
+  in `.figs/config.json` as the error says, and push again.
 - **Idempotent.** Re-running `figs push` is always safe; records fold by `id`.
 - **The token is the human's job.** Never enter or generate auth tokens yourself.
 - **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how to

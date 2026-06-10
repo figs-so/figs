@@ -198,6 +198,14 @@ unchanged file is skipped on publish).
 The server upserts the agent by `id` and runs/asks by `id`; it never deletes. An agent **self-registers**
 on first push — there is no "create agent" step.
 
+**A push never re-homes an agent.** The workspace an agent is registered to is authoritative
+server-side: a payload whose `workspaceId` differs from it is rejected with HTTP `409` and body
+`{ "error", "code": "agent_moved", "workspaceId"? }`. The `error` text states the fix; `workspaceId`
+(the agent's current home) is included only when the pushing token has access to that workspace.
+Moving an agent between workspaces is a reader-side management act, outside this contract — the agent
+recovers by setting `config.json#workspaceId` to the workspace named in the error and pushing again
+(each runner self-heals on its own next push; nothing propagates through the repo).
+
 Because every push is authenticated, the receiver knows which account performed it and **may stamp each
 newly created run/ask with that identity** ("pushed by"). This is server-observed — it attributes the
 *credential*, not necessarily the human at the keyboard (a shared runner box should use a dedicated
