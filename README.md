@@ -34,9 +34,8 @@ better. Figs is the human-facing layer on top: the one place a whole team can se
 Run these from your agent's repo (or have the agent run them):
 
 ```bash
-npx @figs-so/cli@latest login                    # opens your browser to approve (the agent never sees a token)
-npx @figs-so/cli@latest workspaces               # find your workspace slug
-npx @figs-so/cli@latest init --workspace <slug>  # scaffolds .figs/ (identity + a charter template)
+npx @figs-so/cli@latest login                    # opens your browser — sign up & approve (the agent never sees a token)
+npx @figs-so/cli@latest init                     # scaffolds .figs/ — uses your only workspace (--workspace <slug> to pick)
 # fill in .figs/agent.json — its name, mandate, what it owns (figs doctor flags any placeholders)
 npx @figs-so/cli@latest push                     # publish → it appears in your org chart
 ```
@@ -72,7 +71,7 @@ are shorthand for exactly that (always current, no version drift). Prefer a real
 |---|---|
 | `figs login` / `logout` | device-flow browser approve / remove local token |
 | `figs workspaces [--json]` | list your workspaces (create one in the web app) |
-| `figs init --workspace <slug>` | generate identity + write `.figs/` |
+| `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
 | `figs doctor` | validate `.figs/` against the contract before pushing |
 | `figs push` | one-way publish of `.figs/` |
 | `figs status [--json]` | login / workspace / agent state |

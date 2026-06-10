@@ -65,19 +65,17 @@ The goal is just to **appear in the org chart, self-described.** No activity, no
 no change to how you work — only an honest description of who you are. This is low-stakes (a charter
 is generally shareable) and it's the fastest way for your user to see you in Figs.
 
-**First, make sure your user is on Figs.** Login needs an account, and `figs init` needs a workspace
-that exists — so ask them, and if they're not on Figs at all, point them to `<endpoint>` to sign up
-and create a workspace, then come back. (`figs login`/`init` will say this too, but ask first —
-`figs status` can't see an account you're not logged into.)
-
 1. **Run `figs login` yourself** — *you* run it (in the background; it polls and waits). It **opens
    your user's browser** to click **Approve** (and prints a link as a fallback for you to relay if it
-   doesn't open). *Only the approval is theirs* — you never see the token. Don't ask them to run the
-   command, and never generate or paste a token yourself. Confirm with `figs status` once approved.
-2. **`figs init --workspace <slug>`** — generates your identity UUID and scaffolds `.figs/`:
-   `config.json`, a starter `agent.json` + `CONTRACT.md`, a pointer `GUIDE.md`, `.gitignore`, and an
-   empty outbox. It **never clobbers** files you've already written. Get the slug from
-   `figs workspaces` (a UUID works too); omit `--workspace` and it lists yours so you can re-run with one.
+   doesn't open). A user brand-new to Figs is walked through sign-up and creating their first
+   workspace right in that flow — so don't ask whether they have an account; just run it. *Only the
+   browser part is theirs* — you never see the token. Don't ask them to run the command, and never
+   generate or paste a token yourself. Confirm with `figs status` once approved.
+2. **`figs init`** — generates your identity UUID and scaffolds `.figs/`: `config.json`, a starter
+   `agent.json` + `CONTRACT.md`, a pointer `GUIDE.md`, `.gitignore`, and an empty outbox. It **never
+   clobbers** files you've already written. With no `--workspace` it uses your user's only workspace;
+   if they have several, it lists them so you can re-run with `--workspace <slug>` (a UUID works too;
+   `figs workspaces` lists them anytime).
 3. **Fill in `.figs/agent.json`** — your charter (schema below). Replace the `<…>` placeholders by
    reading your own repo — `figs doctor` won't pass while any remain. **Derive, don't invent.**
 4. **Anchor Figs in your standing instructions** — see below. This is what keeps you visible past today.

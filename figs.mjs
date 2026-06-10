@@ -91,7 +91,7 @@ const COMMANDS = {
     desc: "scaffold .figs/ here (identity + charter/contract/guide templates)",
     more: [
       "--workspace takes a slug (resolved to its UUID) or a raw UUID — get it from `figs workspaces`.",
-      "Omit --workspace and (logged in) it lists your workspaces so you can re-run with the right one.",
+      "Omit --workspace and (logged in) it uses your only workspace, or lists them so you can re-run with one.",
       "Never clobbers: an existing agent.json / CONTRACT.md / GUIDE.md / outbox is left exactly as-is.",
     ],
     eg: "figs init --workspace acme-corp",
@@ -361,6 +361,7 @@ async function login(token) {
     if (status === "approved" && r.data.token) {
       saveToken(r.data.token)
       console.log("figs: ✓ authorized — token saved to ~/.figs/credentials.json")
+      console.log("figs: next — run `figs init` to scaffold .figs/ here")
       return
     }
     if (status === "denied") die("authorization denied")
@@ -614,9 +615,10 @@ function findPlaceholders(obj) {
  * Resolve which workspace this `.figs/` belongs to. `--workspace` is optional:
  *  - given a UUID  → use it as-is (no network).
  *  - given a slug  → resolve to its UUID via the API (needs auth).
- *  - omitted       → reuse the one already in config.json (idempotent re-init),
- *                    else list the user's workspaces and have them re-run with one
- *                    (the agent drives the choice — we never silently pick).
+ *  - omitted       → reuse the one already in config.json (idempotent re-init);
+ *                    else use the user's only workspace (logged, so it's visible);
+ *                    else list them and have the agent re-run with one (when
+ *                    there's a real choice, the agent drives it — we never guess).
  * Returns the workspace UUID, or exits with an actionable message.
  */
 async function resolveWorkspaceId(workspaceArg, endpoint) {
@@ -639,7 +641,7 @@ async function resolveWorkspaceId(workspaceArg, endpoint) {
   const existing = readJson(join(repoDir, "config.json"), null)
   if (existing?.workspaceId) return existing.workspaceId
 
-  // First-time init with no workspace named — list them so the agent can re-run.
+  // First-time init with no workspace named — use the only one, else list them.
   if (!getToken()) {
     die("which workspace? run `figs login` first so I can list them, then `figs init --workspace <slug>` (or pass a workspace UUID directly)")
   }
@@ -648,6 +650,10 @@ async function resolveWorkspaceId(workspaceArg, endpoint) {
   const list = r.data.workspaces ?? []
   if (list.length === 0) {
     die(`no workspaces yet — create one at ${endpoint}, then re-run \`figs init --workspace <slug>\``)
+  }
+  if (list.length === 1) {
+    console.log(`figs: using workspace ${list[0].slug} (${list[0].name})`)
+    return list[0].id
   }
   console.log("figs: which workspace? re-run init with one of these:")
   for (const w of list) console.log(`        figs init --workspace ${w.slug}   (${w.name})`)
