@@ -242,6 +242,37 @@ how you're instrumented + where push is wired.** Keep it honest and current.
 - `unit` links to a unit `id`. `result` is the one-line outcome. `artifact` is a file in `artifacts/`.
 - **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. Use a stable id.
 
+### `session` — where this ran (optional, recommended)
+
+Add a `session` object to a run (or an ask) so humans can trace it: which runtime and model did
+this, in which session, from which version of your repo, at what token cost. **Copy the values from
+your runtime's own records — never guess.** Every field is optional; fill what you can find, omit
+the rest.
+
+```json
+"session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "<uuid>",
+  "startedAt": "2026-05-28T23:02:00Z", "commit": "1b68668",
+  "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } }
+```
+
+- `startedAt` — note the time when you begin the job (`ts` is when you report it).
+- `commit` — `git rev-parse --short HEAD`; append `+dirty` if `git status --porcelain` prints anything.
+- `tokens` are **session totals at the time you report** — cumulative, not per-job. That's expected:
+  it's approximate transparency, not metering. Include the cache figures — they usually dominate cost.
+
+**Recipe — Claude Code:** your transcript lives at `~/.claude/projects/<cwd-with-slashes-as-dashes>/<sessionId>.jsonl`
+(newest `.jsonl` there is the current session; its filename is your `sessionId`). Each assistant entry
+carries `message.model` and `message.usage` — sum `input_tokens`, `output_tokens`,
+`cache_read_input_tokens` (→ `cacheRead`), `cache_creation_input_tokens` (→ `cacheWrite`); ignore
+entries whose model is `<synthetic>`.
+
+**Recipe — Codex:** the newest `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` is the current
+session (the uuid in the filename is your `sessionId`). Take `model` from the session meta, and the
+last `token_count` event's `total_token_usage`: `input_tokens` → `input`, `cached_input_tokens` →
+`cacheRead`, `output_tokens` → `output`.
+
+Other runtimes: same idea — find your runtime's session record, copy what it exposes, omit the rest.
+
 ## `asks.jsonl` — what you need from a human (append)
 
 Raise your hand when you're stuck. Assemble the full context so the human can act without
@@ -265,6 +296,8 @@ re-gathering anything.
   non-blocking heads-up — no action required). (`confirm-assumption` still validates but is
   **deprecated** — use `needs-decision` or `fyi`.)
 - Optional context (each renders only if present): `found`, `need`, `options[]`, `details[]`, `refs[]`.
+  An ask can also carry the same `session` block as a run — useful, since asks mark the moments
+  a human will want to trace.
 - **You own the lifecycle.** Close an ask by appending `{ "id": "acme-bridge", "status": "resolved" }`
   on a later run. Folded by `id`. Strictly one-way — the human acts in their own workflow.
 

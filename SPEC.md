@@ -94,6 +94,23 @@ One JSON object per line (JSON Lines). Each is something the agent did.
 | `result` | string | | One-line outcome. |
 | `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. |
 | `artifact` | string | | File name under `artifacts/` to attach. |
+| `session` | `Session` | | Where/how this ran (see [§5.1](#51-session--runtime-metadata-optional)). Optional, self-reported. |
+
+### 5.1 `Session` — runtime metadata (optional)
+
+An optional, **self-reported** block describing the runtime session that produced a run (or raised an
+ask — see §6). Every field is optional — fill what your runtime exposes, omit the rest. This is
+*transparency, not attestation*: the agent copies these values from its runtime's own records (see the
+agent guide for per-runtime recipes); cryptographic provenance remains [reserved](#reserved-not-in-v1).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `runtime` | string | What ran it, e.g. `claude-code`, `codex`, `claude-managed-agents`. |
+| `model` | string | Model id, e.g. `claude-fable-5`. |
+| `sessionId` | string | The runtime's own session identifier. |
+| `startedAt` | string (ISO-8601 w/ offset) | When this job began (the record's `ts` is when it was reported). |
+| `commit` | string | The agent repo's HEAD at run time; append `+dirty` when the working tree had uncommitted changes, e.g. `1b68668+dirty`. |
+| `tokens` | `{ input?, output?, cacheRead?, cacheWrite? }` (numbers) | **Session totals at report time** — cumulative for the whole session, *not* per-job. Approximate by design (an interactive session may include unrelated chat). Readers may derive per-run deltas between consecutive runs sharing a `sessionId`. Include cache figures when available — in agentic sessions they often dominate real cost. |
 
 ## 6. `asks.jsonl` — handoffs to a human
 
@@ -113,6 +130,7 @@ primitive** — the agent reached the edge of its autonomy.
 | `details` | `{ l, v }[]` | | Labelled facts (e.g. amount at risk). |
 | `refs` | `{ label, artifact? }[]` | | Pointers to artifacts that back the ask. |
 | `ts` | string (ISO-8601 w/ offset) | | |
+| `session` | `Session` | | The session that raised this ask (same shape as [§5.1](#51-session--runtime-metadata-optional)). |
 
 > In v1, an ask is **one-way**: it announces that a human is needed. Resolution happens in the agent's own
 > workflow (the agent sets `status: "resolved"` on a later push). Answers flowing *back* through Figs are
@@ -146,6 +164,11 @@ unchanged file is skipped on publish).
 
 The server upserts the agent by `id` and runs/asks by `id`; it never deletes. An agent **self-registers**
 on first push — there is no "create agent" step.
+
+Because every push is authenticated, the receiver knows which account performed it and **may stamp each
+newly created run/ask with that identity** ("pushed by"). This is server-observed — it attributes the
+*credential*, not necessarily the human at the keyboard (a shared runner box should use a dedicated
+account named for what it is, e.g. "Runner — analytics box"). Agents never author this field.
 
 ## 9. Validation & versioning
 
@@ -205,7 +228,10 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 
 ```jsonc
 // .figs/runs.jsonl   (one object per line)
-{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "artifact": "acme-2025-11.html" }
+{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "artifact": "acme-2025-11.html",
+  "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "3fffcd97-d4f5-4b77-8243-8f450d7c9614",
+    "startedAt": "2026-05-28T23:02:00Z", "commit": "1b68668",
+    "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } } }
 ```
 
 ```jsonc
