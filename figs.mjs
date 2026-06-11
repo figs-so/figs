@@ -9,8 +9,8 @@
  *   figs workspaces                     list the user's workspaces               [--json]
  *   figs init --workspace <slug-or-id> [--endpoint <url>]
  *                                         create .figs/config.json + GUIDE.md (generates a stable agent id)
- *   figs report --result "…"            record a run (stamps id/ts, --attach files, auto-push)
- *   figs ask <type> --title "…"         raise an ask (self-contained: options/details/attachments, auto-push)
+ *   figs report --result '…'            record a run (stamps id/ts, --attach files, auto-push)
+ *   figs ask <type> --title '…'         raise an ask (self-contained: options/details/attachments, auto-push)
  *   figs inbox [<ask-id>]               what needs you — answers/verdicts from your humans (pure read)
  *   figs resolve <ask-id>               close an ask (verbatim-checks --chosen; cites the Figs answer it acted on)
  *   figs doctor                         validate .figs/ against the spec before pushing
@@ -122,12 +122,14 @@ const COMMANDS = {
       "stopping to wait for a human is not a job.",
       "You supply the content; the CLI does the bookkeeping (id, real-clock ts,",
       "validation, artifact copy, push).",
+      "Single-quote prose values ('…') — inside double quotes your shell expands $,",
+      "so \"($4,474.63)\" reaches figs as \"(,474.63)\": silent corruption.",
       "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
       "--no-push writes locally only; `figs push` publishes later.",
       "Closing an ask is `figs resolve` — a close is not a job; never report one.",
       "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
     ],
-    eg: 'figs report --id recon-acme-2026-11 --result "88% matched · 31 flagged" --attach ./acme-2025-11.html',
+    eg: "figs report --id recon-acme-2026-11 --result '88% matched · 31 flagged' --attach ./acme-2025-11.html",
   },
   ask: {
     args: "<type> --title <text> [options]",
@@ -141,14 +143,15 @@ const COMMANDS = {
       "Make it self-contained — a future session with zero context (or another human)",
       "must be able to act from this record alone: --found (what you saw), --need (what",
       "you need), --option (repeatable; short, stable, quotable — answers cite one",
-      "verbatim), --detail \"Label=Value\" (repeatable), --attach <file> (repeatable;",
+      "verbatim), --detail 'Label=Value' (repeatable), --attach <file> (repeatable;",
       "for sign-offs attach the exact content for review + a brief: what to do once",
       "approved and what it requires).",
       "--run <run-id> links the run this came out of — explicit id only (other",
       "sessions may report concurrently; `figs report` prints the id it wrote).",
       "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
+      "Single-quote prose values ('…') — double quotes let your shell eat $ amounts.",
     ],
-    eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run recon-2026-06',
+    eg: "figs ask sign-off --title 'Send 10 payment reminders' --attach ./previews.html --run recon-2026-06",
   },
   inbox: {
     args: "[<ask-id>] [--json]",
@@ -178,7 +181,7 @@ const COMMANDS = {
       "real work → do the job, `figs report` it under its own id, THEN resolve —",
       "cite the job id in --note so a reader can find the work.",
     ],
-    eg: 'figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"',
+    eg: "figs resolve acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'",
   },
   doctor: {
     args: "",
@@ -994,6 +997,23 @@ function attachFiles(paths) {
   return names
 }
 
+// A `$` eaten by the caller's shell (double-quoted "$4,474.63" → ",474.63")
+// leaves a signature legit prose essentially never has: an orphaned thousands
+// group or a bare ".00" cents tail. Best-effort tripwire — warn and teach,
+// never block (the heuristic can't be certain, and records fold by id, so a
+// corrected re-run heals the row). "$1K" → "K" leaves no signature; that case
+// is why every emitted template teaches single-quoted prose in the first place.
+function warnEatenDollar(...texts) {
+  // regex lives inside the function: the CLI dispatches commands during module
+  // evaluation, so a top-level const here would still be in its TDZ when called
+  const eaten = /(^|[\s([{])(,\d{3}\b|\.00\b)/
+  if (texts.flat().filter(Boolean).some((t) => eaten.test(String(t)))) {
+    console.warn(
+      "figs: ! a value looks like your shell ate a `$` (\"$4,474.63\" in double quotes becomes \",474.63\") — single-quote prose args ('…') and re-run; the same id folds the fix onto the record",
+    )
+  }
+}
+
 // ---------- the inbox (the DOWN direction — a pure read) ---------------------
 
 /** Relative time for inbox lines — rough on purpose. */
@@ -1043,13 +1063,13 @@ function nextMove(a) {
     return (
       `approved — verify any prerequisites in the ask, then fork on what it unlocked:` +
       `\n      nothing left to do → figs resolve ${a.id}` +
-      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id} --note "job <id>"`
+      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id} --note 'job <id>'`
     )
   }
   if (last.kind === "verdict" && last.verdict === "changes_requested") {
-    return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title "…" …`
+    return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title '…' …`
   }
-  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen "…"`
+  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen '…'`
 }
 
 /** Restore an ask's refs into artifacts/ — hash-verified; never clobbers. */
@@ -1248,6 +1268,7 @@ async function buildResolution(askId, { chosen, by, note, withdrawn, rejected })
     if (!by && cited.byName) resolution.by = cited.byName
   }
 
+  warnEatenDollar(resolution.chosen, resolution.note)
   const line = {
     id: askId,
     status: withdrawn ? "withdrawn" : rejected ? "rejected" : "resolved",
@@ -1272,7 +1293,7 @@ async function reportCmd() {
   requireFigs()
   const result = flag("--result")
   if (!result) {
-    die('report needs --result "<one-line outcome>" — e.g. figs report --result "88% matched · 31 flagged"')
+    die("report needs --result '<one-line outcome>' — e.g. figs report --result '88% matched · 31 flagged'")
   }
   const run = { id: flag("--id") || genId("r"), ts: nowIso(), result }
   const unit = flag("--unit")
@@ -1284,6 +1305,7 @@ async function reportCmd() {
   const attached = attachFiles(flagAll("--attach"))
   if (attached.length === 1) run.artifact = attached[0]
   else if (attached.length > 1) run.artifacts = attached
+  warnEatenDollar(run.result)
   const issues = validateRun(run)
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("runs.jsonl", run)
@@ -1312,11 +1334,11 @@ async function askCmd() {
     }
   }
   const type = positional() ?? base.type
-  if (!type) die(`ask needs a type: figs ask <${ASK_TYPES.join("|")}> --title "…"`)
+  if (!type) die(`ask needs a type: figs ask <${ASK_TYPES.join("|")}> --title '…'`)
   const ask = { ...base, id: flag("--id") ?? base.id ?? genId("ask"), ts: nowIso(), type }
   if (!ask.status) ask.status = "open"
   const title = flag("--title") ?? base.title
-  if (!title) die('ask needs --title "<the ask, in one line>"')
+  if (!title) die("ask needs --title '<the ask, in one line>'")
   ask.title = title
   for (const [f, k] of [["--need", "need"], ["--found", "found"], ["--unit", "unit"], ["--to", "to"]]) {
     const v = flag(f)
@@ -1353,6 +1375,13 @@ async function askCmd() {
       "figs: ! tip: a sign-off reviews best with attachments — the exact content to approve, plus a brief (what to do once approved + what it requires). Add --attach <file>",
     )
   }
+  warnEatenDollar(
+    ask.title,
+    ask.found,
+    ask.need,
+    ask.options ?? [],
+    (ask.details ?? []).flatMap((d) => [d.l, d.v]),
+  )
   const issues = validateAsk(ask)
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("asks.jsonl", ask)

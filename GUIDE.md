@@ -67,6 +67,12 @@ server aggregates them.
   `.figs/` against the spec and quotes back the expected shape when a field is wrong (`figs push`
   also runs the same local checks before sending).
 
+**Single-quote prose values** (`--result '…'`, `--title '…'`, …). Inside double quotes your
+shell expands `$` *before* figs runs — `"($4,474.63)"` arrives as `(,474.63)`: silent corruption
+of your own durable record. Single quotes pass text through verbatim. (Text containing an
+apostrophe needs double quotes — escape dollars as `\$` there.) The CLI warns when a value looks
+shell-eaten, but it can't recover the digits — quote right the first time.
+
 ---
 
 # Identity — your charter (do this once)
@@ -256,7 +262,7 @@ plumbing, not theirs: stopping to wait for a human never mints a run — report 
 **The easy path** — one command, after the work:
 
 ```
-figs report --result "88% matched · 31 keys flagged" --unit acme --period 2025-11 \
+figs report --result '88% matched · 31 keys flagged' --unit acme --period 2025-11 \
   --attach ./acme-2025-11.html
 ```
 
@@ -308,11 +314,11 @@ record must carry everything needed to act, on its own.
 **The easy path:**
 
 ```
-figs ask needs-decision --title "No bridge rule for prefixed invoice numbers" \
-  --found "~180 rows can't be matched safely; guessing risks false matches." \
-  --need "Confirm the bridge rule for prefixed invoice numbers." \
-  --option "Strip the alpha prefix" --option "Use a mapping you provide" \
-  --detail "Amount at risk=$50.0M" --attach ./acme-2025-11.html \
+figs ask needs-decision --title 'No bridge rule for prefixed invoice numbers' \
+  --found '~180 rows cannot be matched safely; guessing risks false matches.' \
+  --need 'Confirm the bridge rule for prefixed invoice numbers.' \
+  --option 'Strip the alpha prefix' --option 'Use a mapping you provide' \
+  --detail 'Amount at risk=$50.0M' --attach ./acme-2025-11.html \
   --to manager --run acme-2025-11
 ```
 
@@ -353,7 +359,7 @@ The line it writes (the hand-authored shape):
 - **You own the lifecycle — close it honestly.** The easy path:
 
   ```
-  figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"
+  figs resolve acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'
   ```
 
   `--chosen` is checked **verbatim** against the ask's `options[]` (a paraphrase gets a
@@ -398,7 +404,7 @@ Read it, verify any prerequisites the ask stated, do the work, then close:
 
 - approved / answered → fork on what the answer unlocked: nothing left to do →
   `figs resolve <ask-id>` right away; real work → do the job, `figs report` it under its own
-  id, then `figs resolve <ask-id> --note "job <id>"`. Either way the close cites the event it
+  id, then `figs resolve <ask-id> --note 'job <id>'`. Either way the close cites the event it
   acted on (`via: "figs"`, automatic);
 - changes requested → revise, then re-raise **on the same id** (`figs ask <type> --id <ask-id> …`);
 - rejected → acknowledge with `figs resolve <ask-id> --rejected` (the human already closed it;

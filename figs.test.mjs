@@ -606,6 +606,31 @@ test("report never stamps an inferred session block (a trace must be true or abs
   rmSync(home, { recursive: true, force: true })
 })
 
+test("report warns when the shell ate a $ (orphaned thousands group), but still writes", async () => {
+  // "$4,474.63" inside double quotes reaches the CLI as ",474.63" — the agent's
+  // shell expanded $4 before argv. The CLI can't recover the digit, but the
+  // orphaned comma-group is a signature legit prose doesn't have: warn + teach,
+  // never block (a re-run on the same id folds the fix onto the record).
+  const repo = await pushableRepo()
+  const r = await run(["report", "--result", "filed 15 charges (,474.63) total"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /ate a `\$`/)
+  assert.match(r.out, /✓ run recorded/, "warn must not block the write")
+})
+
+test("report does not cry wolf on intact $ amounts and normal numbers", async () => {
+  const repo = await pushableRepo()
+  const r = await run(
+    ["report", "--result", "filed 15 charges ($4,474.63); 10,000 rows matched at p = .05"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  assert.ok(!r.out.includes("ate a"), `false positive: ${r.out}`)
+})
+
 test("resolve --rejected records the human's no (terminal close, via human)", async () => {
   const repo = await pushableRepo()
   writeFileSync(
