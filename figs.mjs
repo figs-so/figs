@@ -11,7 +11,8 @@
  *                                         create .figs/config.json + GUIDE.md (generates a stable agent id)
  *   figs report --result "…"            record a run (stamps id/ts/session, --attach files, auto-push)
  *   figs ask <type> --title "…"         raise an ask (self-contained: options/details/attachments, auto-push)
- *   figs resolve <ask-id>               close an ask (verbatim-checks --chosen, auto-push)
+ *   figs inbox [<ask-id>]               what needs you — answers/verdicts from your humans (pure read)
+ *   figs resolve <ask-id>               close an ask (verbatim-checks --chosen; cites the Figs answer it acted on)
  *   figs doctor                         validate .figs/ against the spec before pushing
  *   figs push                           one-way push the .figs/ spine to the ingest endpoint
  *   figs version                        print the CLI version (and check for updates)
@@ -49,7 +50,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, extname, join } from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { execSync, spawn } from "node:child_process"
 
 // Single source of truth for the version: package.json (shipped alongside this
@@ -147,6 +148,21 @@ const COMMANDS = {
       "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
     ],
     eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run recon-2026-06',
+  },
+  inbox: {
+    args: "[<ask-id>] [--json]",
+    flags: ["--json"],
+    desc: "what needs you — your humans' answers/verdicts on your asks (pure read)",
+    more: [
+      "Start every session with this. Bare: lists every ask with thread activity —",
+      "answers and verdicts verbatim, plus the exact next command for each.",
+      "With an ask id: the full handoff package — the ask, the whole thread, and its",
+      "attached artifacts restored into .figs/artifacts/ (hash-verified) so a fresh",
+      "session can act from the record alone.",
+      "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged.",
+      "Reads only — closing still happens via figs resolve / figs report --resolves.",
+    ],
+    eg: "figs inbox",
   },
   resolve: {
     args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn|--rejected]",
@@ -477,6 +493,7 @@ else if (COMMANDS[cmd]) {
   else if (cmd === "init") await init()
   else if (cmd === "report") await reportCmd()
   else if (cmd === "ask") await askCmd()
+  else if (cmd === "inbox") await inboxCmd()
   else if (cmd === "resolve") await resolveCmd()
   else if (cmd === "doctor") await doctor()
   else if (cmd === "push") await push()
@@ -1103,31 +1120,233 @@ function captureCommit() {
   }
 }
 
+// ---------- the inbox (the DOWN direction — a pure read) ---------------------
+
+/** Relative time for inbox lines — rough on purpose. */
+function agoStr(iso) {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
+  if (mins < 60) return `${mins}m ago`
+  if (mins < 60 * 48) return `${Math.round(mins / 60)}h ago`
+  return `${Math.round(mins / 1440)}d ago`
+}
+
+/** Fetch this agent's inbox; null on any failure when `soft` (auto-cite path). */
+async function fetchInbox({ soft = false } = {}) {
+  const config = readJson(join(repoDir, "config.json"), {})
+  if (!config.agentId) {
+    if (soft) return null
+    die("config missing agentId — run `figs init`")
+  }
+  const r = await request("GET", `/api/inbox?agent=${config.agentId}`)
+  if (!r.ok) {
+    if (soft) return null
+    die(`inbox failed (${r.status || "network"}): ${r.data.error ?? r.data.raw ?? ""}`)
+  }
+  return r.data
+}
+
+/** One human event, verbatim — answers are instructions; never paraphrase them. */
+function eventLine(e) {
+  const head =
+    e.kind === "verdict"
+      ? `${e.verdict.replace(/_/g, " ")} by ${e.byName} (${e.asRole})`
+      : `answered by ${e.byName} (${e.asRole})`
+  const body = [e.chosen ? `→ "${e.chosen}"` : null, e.text ? `"${e.text}"` : null]
+    .filter(Boolean)
+    .join(" · ")
+  return `${head} · ${agoStr(e.createdAt)}${body ? `\n      ${body}` : ""}`
+}
+
+/** The type×state matrix → the exact next command. The stranger never needs
+ *  to know the state machine — the protocol tells them their move. */
+function nextMove(a) {
+  if (a.status === "rejected") {
+    return `a human declined this — acknowledge it: figs resolve ${a.id} --rejected`
+  }
+  const last = a.events[a.events.length - 1]
+  if (!last) return "waiting on your human — nothing for you to do"
+  if (last.kind === "verdict" && last.verdict === "approved") {
+    return `approved — verify any prerequisites in the ask, do it, then: figs report --resolves ${a.id}`
+  }
+  if (last.kind === "verdict" && last.verdict === "changes_requested") {
+    return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title "…" …`
+  }
+  return `act on the answer, then: figs report --resolves ${a.id}  (or figs resolve ${a.id} --chosen "…")`
+}
+
+/** Restore an ask's refs into artifacts/ — hash-verified; never clobbers. */
+async function fetchRefs(config, refs) {
+  for (const ref of refs ?? []) {
+    if (!ref.artifact) continue
+    const name = ref.artifact
+    let res
+    try {
+      res = await fetchT(
+        `${resolveEndpoint()}/api/artifacts/raw?agent=${config.agentId}&name=${encodeURIComponent(name)}`,
+        { headers: { "x-figs-token": getToken() } },
+      )
+    } catch (e) {
+      console.warn(`figs: ! couldn't fetch artifacts/${name} (${netReason(e)})`)
+      continue
+    }
+    if (!res.ok) {
+      console.warn(`figs: ! couldn't fetch artifacts/${name} (${res.status})`)
+      continue
+    }
+    const bytes = Buffer.from(await res.arrayBuffer())
+    const want = res.headers.get("x-figs-sha256")
+    if (want && createHash("sha256").update(bytes).digest("hex") !== want) {
+      console.warn(`figs: ! artifacts/${name}: bytes didn't match the server's hash — skipped`)
+      continue
+    }
+    const dest = join(repoDir, "artifacts", name)
+    if (existsSync(dest)) {
+      if (readFileSync(dest).equals(bytes)) {
+        console.log(`figs:   ✓ artifacts/${name} (already present)`)
+      } else {
+        console.warn(
+          `figs: ! artifacts/${name} exists locally with different content — left untouched (the published copy stays one fetch away)`,
+        )
+      }
+      continue
+    }
+    mkdirSync(join(repoDir, "artifacts"), { recursive: true })
+    writeFileSync(dest, bytes)
+    console.log(`figs:   ✓ artifacts/${name} (fetched, hash ok)`)
+  }
+}
+
+/**
+ * `figs inbox` — session start. Bare: every ask with thread activity + the
+ * next command for each. With an id: the zero-context handoff package (the
+ * ask, the whole thread verbatim, refs restored to disk). Pure read — writes
+ * nothing to the outbox; closing happens via resolve / report --resolves.
+ */
+async function inboxCmd() {
+  requireFigs()
+  const config = readJson(join(repoDir, "config.json"), {})
+  const data = await fetchInbox()
+  const items = data.asks ?? []
+  const askId = positional()
+
+  if (hasFlag("--json") && !askId) {
+    console.log(JSON.stringify(data, null, 2))
+    return
+  }
+
+  if (askId) {
+    const a = items.find((x) => x.id === askId)
+    if (!a) {
+      die(
+        `ask "${askId}" isn't in your inbox (open asks + unacknowledged rejections only — closed history lives in the app)`,
+      )
+    }
+    console.log(`figs: ${a.title}`)
+    console.log(`      ${a.type} · ${a.status}${a.to ? ` · for the ${a.to}` : ""} · raised ${agoStr(a.ts)}`)
+    if (a.found) console.log(`\n  What it found:\n      ${a.found}`)
+    if (a.need) console.log(`\n  What it needs:\n      ${a.need}`)
+    if (a.options?.length) {
+      console.log(`\n  Options (answers cite these verbatim):`)
+      for (const o of a.options) console.log(`      · ${o}`)
+    }
+    if (a.details?.length) {
+      console.log(`\n  Details:`)
+      for (const d of a.details) console.log(`      ${d.l}: ${d.v}`)
+    }
+    if (a.events.length) {
+      console.log(`\n  THE THREAD (your humans' words, verbatim):`)
+      for (const e of a.events) console.log(`    · ${eventLine(e)}`)
+    } else {
+      console.log(`\n  No answer yet.`)
+    }
+    if (a.refs?.length) {
+      console.log(`\n  Attached artifacts (restoring to .figs/artifacts/):`)
+      await fetchRefs(config, a.refs)
+    }
+    console.log(`\n  → next: ${nextMove(a)}`)
+    return
+  }
+
+  if (data.truncated) {
+    console.warn(`figs: ! showing the first ${items.length} — more exist (close some asks)`)
+  }
+  if (items.length === 0) {
+    console.log("figs: ✓ inbox empty — no open asks, nothing needs you")
+    return
+  }
+  const rejected = items.filter((a) => a.status === "rejected")
+  const answered = items.filter((a) => a.status === "open" && a.events.length > 0)
+  const quiet = items.filter((a) => a.status === "open" && a.events.length === 0)
+  console.log(
+    `figs: inbox — ${answered.length} answered · ${rejected.length} rejected to acknowledge · ${quiet.length} waiting on your human`,
+  )
+  const printItem = (a) => {
+    const last = a.events[a.events.length - 1]
+    console.log(`\n  ${a.id} · ${a.type} — ${a.title}`)
+    if (last) console.log(`    ${eventLine(last)}`)
+    console.log(`    → ${nextMove(a)}${a.events.length > 1 ? `   (full thread: figs inbox ${a.id})` : ""}`)
+  }
+  for (const a of [...rejected, ...answered]) printItem(a)
+  if (quiet.length) {
+    console.log(`\n  Waiting on your human (nothing for you to do):`)
+    for (const a of quiet) console.log(`    · ${a.id} · ${a.type} — ${a.title} (raised ${agoStr(a.ts)})`)
+  }
+}
+
 // ---------- the resolution fold (shared by `resolve` and `report --resolves`) -
-function buildResolution(askId, { chosen, by, note, withdrawn, rejected }) {
+/**
+ * Build the closing fold line. Best-effort, the verified path: fetches this
+ * agent's inbox and, when the ask has human events, cites the one acted on —
+ * `via: "figs"` + `resolution.answer: <event-id>` (+ `by` from the event) —
+ * attribution by mechanism, not testimony. An ask found on the server but
+ * missing locally is appended first (its own bytes coming home), so the fold
+ * lands on a complete record. Offline or any failure → today's self-reported
+ * `via: "human"` path, unchanged.
+ */
+async function buildResolution(askId, { chosen, by, note, withdrawn, rejected }) {
   if (withdrawn && rejected) {
     die("--withdrawn and --rejected are different closes: withdrawn = YOU retracted the ask; rejected = a HUMAN declined it. Pick the one that's true.")
   }
   if ((withdrawn || rejected) && chosen) {
     die(`--chosen marks the need as met — it can't combine with ${withdrawn ? "--withdrawn" : "--rejected"} (use --note for the account)`)
   }
-  const asks = foldById(readJsonl("asks.jsonl"))
-  const ask = asks.find((a) => a.id === askId)
   const warnings = []
-  if (!ask) {
+  let ask = foldById(readJsonl("asks.jsonl")).find((a) => a.id === askId)
+
+  // The verified path (soft — never blocks a close).
+  let serverAsk = null
+  if (getToken()) {
+    const inbox = await fetchInbox({ soft: true })
+    serverAsk = inbox?.asks?.find((a) => a.id === askId) ?? null
+  }
+  if (!ask && serverAsk) {
+    // Its own bytes coming home: append the record so the fold has something
+    // local to land on (the cross-machine close, solved inside the verb).
+    const record = { ...serverAsk }
+    delete record.events
+    delete record.updatedAt
+    if (record.resolution == null) delete record.resolution
+    appendJsonl("asks.jsonl", record)
+    warnings.push(`fetched "${askId}" from Figs (raised elsewhere) — recorded locally before closing`)
+    ask = record
+  } else if (!ask) {
     warnings.push(
       `ask "${askId}" isn't in the local asks.jsonl (raised on another machine, or pruned) — recording the close anyway; the server folds it onto the full record`,
     )
-  } else if (chosen && ask.options?.length && !ask.options.includes(chosen)) {
+  }
+
+  const options = ask?.options ?? serverAsk?.options ?? []
+  if (chosen && options.length && !options.includes(chosen)) {
     const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
-    const near = ask.options.find((o) => norm(o) === norm(chosen))
+    const near = options.find((o) => norm(o) === norm(chosen))
     if (near) die(`--chosen must quote the option verbatim — did you mean "${near}"?`)
     die(
       `--chosen "${chosen}" doesn't match any of the ask's options:\n` +
-        ask.options.map((o) => `    · ${o}`).join("\n") +
+        options.map((o) => `    · ${o}`).join("\n") +
         "\n  (quote one verbatim, or use --note for a free-text account)",
     )
   }
+
   const resolution = {}
   if (chosen) resolution.chosen = chosen
   if (by) resolution.by = by
@@ -1137,6 +1356,20 @@ function buildResolution(askId, { chosen, by, note, withdrawn, rejected }) {
   // when there's evidence of one (a chosen/by), never on withdrawn (nobody
   // acted — that's the point).
   if (rejected || (!withdrawn && (chosen || by))) resolution.via = "human"
+
+  // Cite the event acted on, when one exists: prefer the latest answer whose
+  // chosen matches, else the latest event (e.g. the approval, the rejection).
+  const events = serverAsk?.events ?? []
+  if (!withdrawn && events.length) {
+    const match = chosen
+      ? [...events].reverse().find((e) => e.kind === "answer" && e.chosen === chosen)
+      : null
+    const cited = match ?? events[events.length - 1]
+    resolution.via = "figs"
+    resolution.answer = cited.id
+    if (!by && cited.byName) resolution.by = cited.byName
+  }
+
   const line = {
     id: askId,
     status: withdrawn ? "withdrawn" : rejected ? "rejected" : "resolved",
@@ -1177,7 +1410,7 @@ async function reportCmd() {
   let resolution = null
   if (resolves) {
     run.resolves = resolves
-    resolution = buildResolution(resolves, {
+    resolution = await buildResolution(resolves, {
       chosen: flag("--chosen"),
       by: flag("--by"),
       note: flag("--note"),
@@ -1272,7 +1505,7 @@ async function askCmd() {
   }
   await autoPush()
   console.log(
-    "figs:   answers arrive out-of-band for now (`figs inbox` is coming) — your human replies in the app thread or directly to you",
+    "figs:   your human answers in the app — start your next session with `figs inbox` to read it",
   )
 }
 
@@ -1280,7 +1513,7 @@ async function resolveCmd() {
   requireFigs()
   const askId = positional()
   if (!askId) die("resolve needs the ask id: figs resolve <ask-id> [--chosen …] [--withdrawn]")
-  const { line, warnings } = buildResolution(askId, {
+  const { line, warnings } = await buildResolution(askId, {
     chosen: flag("--chosen"),
     by: flag("--by"),
     note: flag("--note"),

@@ -29,6 +29,10 @@ const mock = {
   versionMin: "0.0.1",
   lastIngest: null,
   uploads: [],
+  /** GET /api/inbox response — tests set asks; reset to empty per test. */
+  inbox: { ok: true, truncated: false, asks: [] },
+  /** name → { content, hash } served by GET /api/artifacts/raw. */
+  rawArtifacts: new Map(),
 }
 let server, base
 
@@ -57,6 +61,19 @@ before(async () => {
       if (req.url === "/api/artifacts/upload") {
         mock.uploads.push(JSON.parse(body))
         return send(200, { ok: true })
+      }
+      if (req.url.startsWith("/api/inbox")) {
+        return send(200, mock.inbox)
+      }
+      if (req.url.startsWith("/api/artifacts/raw")) {
+        const name = new URL(req.url, "http://x").searchParams.get("name")
+        const art = mock.rawArtifacts.get(name)
+        if (!art) return send(404, { error: "not found" })
+        res.writeHead(200, {
+          "content-type": "text/html",
+          "x-figs-sha256": art.hash,
+        })
+        return res.end(art.content)
       }
       send(404, { error: `no mock for ${req.url}` })
     })
@@ -623,4 +640,245 @@ test("resolve --rejected records the human's no (terminal close, via human)", as
   const fold = lastLine(repo, "asks.jsonl")
   assert.equal(fold.status, "rejected")
   assert.deepEqual(fold.resolution, { by: "Sarah", note: "not this quarter", via: "human" })
+})
+
+// ---------- figs inbox + the verified close (auto-cite) ---------------------
+
+import { createHash } from "node:crypto"
+
+const sha = (s) => createHash("sha256").update(s).digest("hex")
+const resetInbox = () => {
+  mock.inbox = { ok: true, truncated: false, asks: [] }
+  mock.rawArtifacts = new Map()
+}
+
+const inboxAsk = (over = {}) => ({
+  id: "ask-1",
+  type: "sign-off",
+  status: "open",
+  to: "manager",
+  title: "Send 10 payment reminders",
+  need: "Approve exactly these",
+  options: null,
+  details: [{ l: "Before executing", v: "SMTP creds · drafts <7d old" }],
+  refs: null,
+  ts: new Date(Date.now() - 7200000).toISOString(),
+  updatedAt: new Date(Date.now() - 7200000).toISOString(),
+  events: [],
+  ...over,
+})
+const approval = {
+  id: "ev-approve-1",
+  kind: "verdict",
+  verdict: "approved",
+  chosen: null,
+  text: "go ahead, BCC me on the big ones",
+  byName: "Sarah",
+  asRole: "manager",
+  createdAt: new Date(Date.now() - 3600000).toISOString(),
+}
+
+test("inbox lists sections with the exact next command per state", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.inbox.asks = [
+    inboxAsk({ id: "ask-ok", events: [approval] }),
+    inboxAsk({
+      id: "ask-no",
+      type: "needs-decision",
+      status: "rejected",
+      title: "Old question",
+      events: [
+        { ...approval, id: "ev-rej", verdict: "rejected", text: "not needed anymore" },
+      ],
+    }),
+    inboxAsk({ id: "ask-quiet", type: "blocked", title: "Stuck on creds", events: [] }),
+  ]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /1 answered · 1 rejected to acknowledge · 1 waiting on your human/)
+  assert.match(r.out, /approved by Sarah \(manager\)/)
+  assert.match(r.out, /"go ahead, BCC me on the big ones"/, "the human's words, verbatim")
+  assert.match(r.out, /figs report --resolves ask-ok/)
+  assert.match(r.out, /figs resolve ask-no --rejected/)
+  assert.match(r.out, /Stuck on creds \(raised /)
+})
+
+test("inbox is empty-friendly and honest about truncation", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  const empty = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(empty.code, 0)
+  assert.match(empty.out, /inbox empty/)
+  mock.inbox.truncated = true
+  mock.inbox.asks = [inboxAsk({ id: "a", events: [approval] })]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.match(r.out, /more exist/)
+})
+
+test("inbox <id> prints the handoff package and restores refs (hash-verified)", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.rawArtifacts.set("previews.html", {
+    content: "<p>emails</p>",
+    hash: sha("<p>emails</p>"),
+  })
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "ask-pkg",
+      events: [approval],
+      refs: [{ label: "previews.html", artifact: "previews.html" }],
+    }),
+  ]
+  const r = await run(["inbox", "ask-pkg"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /THE THREAD/)
+  assert.match(r.out, /Before executing: SMTP creds/)
+  assert.match(r.out, /previews\.html \(fetched, hash ok\)/)
+  assert.equal(
+    readFileSync(join(repo, ".figs/artifacts/previews.html"), "utf8"),
+    "<p>emails</p>",
+  )
+  assert.match(r.out, /verify any prerequisites.*figs report --resolves ask-pkg/)
+})
+
+test("inbox <id> never clobbers a local artifact with different bytes", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  mkdirSync(join(repo, ".figs/artifacts"), { recursive: true })
+  writeFileSync(join(repo, ".figs/artifacts/previews.html"), "<p>local work</p>")
+  mock.rawArtifacts.set("previews.html", {
+    content: "<p>server copy</p>",
+    hash: sha("<p>server copy</p>"),
+  })
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "ask-pkg2",
+      events: [approval],
+      refs: [{ label: "previews.html", artifact: "previews.html" }],
+    }),
+  ]
+  const r = await run(["inbox", "ask-pkg2"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /exists locally with different content — left untouched/)
+  assert.equal(
+    readFileSync(join(repo, ".figs/artifacts/previews.html"), "utf8"),
+    "<p>local work</p>",
+  )
+})
+
+test("resolve auto-cites the answer event it acted on (via figs, verified)", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-cite","ts":"2026-06-11T00:00:00Z","type":"needs-decision","title":"Bridge rule","options":["Strip the alpha prefix","Out of scope"]}\n`,
+  )
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "a-cite",
+      type: "needs-decision",
+      title: "Bridge rule",
+      options: ["Strip the alpha prefix", "Out of scope"],
+      events: [
+        {
+          id: "ev-ans-7",
+          kind: "answer",
+          verdict: null,
+          chosen: "Strip the alpha prefix",
+          text: null,
+          byName: "Sarah",
+          asRole: "manager",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  ]
+  const r = await run(
+    ["resolve", "a-cite", "--chosen", "Strip the alpha prefix", "--no-push"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.deepEqual(fold.resolution, {
+    chosen: "Strip the alpha prefix",
+    via: "figs",
+    answer: "ev-ans-7",
+    by: "Sarah",
+  })
+})
+
+test("resolve self-fetches an ask raised elsewhere, then folds the close onto it", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "a-remote",
+      type: "blocked",
+      title: "Creds expired",
+      events: [
+        {
+          id: "ev-fix",
+          kind: "answer",
+          verdict: null,
+          chosen: null,
+          text: "rotated — try again",
+          byName: "Sarah",
+          asRole: "builder",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  ]
+  const r = await run(["resolve", "a-remote", "--note", "unblocked", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /fetched "a-remote" from Figs/)
+  const lines = readLines(repo, "asks.jsonl")
+  const record = lines.find((l) => l.title === "Creds expired")
+  assert.ok(record, "the full record came home before the fold")
+  assert.equal(record.events, undefined, "server-only fields stripped")
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "resolved")
+  assert.equal(fold.resolution.via, "figs")
+  assert.equal(fold.resolution.answer, "ev-fix")
+})
+
+test("report --resolves cites the approval it executed", async () => {
+  resetInbox()
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-go","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"Send 10 reminders"}\n`,
+  )
+  mock.inbox.asks = [inboxAsk({ id: "a-go", events: [approval] })]
+  const r = await run(["report", "--result", "sent 10/10", "--resolves", "a-go"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  const askFold = mock.lastIngest.body.asks.find((a) => a.id === "a-go")
+  assert.equal(askFold.status, "resolved")
+  assert.equal(askFold.resolution.via, "figs")
+  assert.equal(askFold.resolution.answer, "ev-approve-1")
+  assert.equal(askFold.resolution.by, "Sarah")
+})
+
+test("resolve falls back to via human when the inbox has nothing (offline path)", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"blocked","title":"Stuck"}\n`,
+  )
+  const r = await run(["resolve", "a-ob", "--by", "Sarah", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.deepEqual(fold.resolution, { by: "Sarah", via: "human" })
 })

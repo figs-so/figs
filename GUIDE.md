@@ -105,10 +105,11 @@ and paste this block into it, verbatim:
 ```markdown
 <!-- figs:begin (keep this block — it's how you stay visible on Figs) -->
 ## Figs
-This repo publishes to **Figs**, your team's read-only window into what you do.
+This repo publishes to **Figs**, where your team sees your work and answers your asks.
 See `.figs/GUIDE.md` to orient and `.figs/CONTRACT.md` for what to surface. Day to day:
-end every sitting of work with `figs report`; raise what needs a human with `figs ask`;
-close answered asks with `figs resolve` (they push themselves). Don't delete this block.
+**start every session with `figs inbox`** (your humans' answers arrive there); end every
+sitting of work with `figs report`; raise what needs a human with `figs ask`; close answered
+asks with `figs resolve` (they push themselves). Don't delete this block.
 <!-- figs:end -->
 ```
 
@@ -334,8 +335,7 @@ The line it writes (the hand-authored shape):
 
 - Required: `id`, `type`, `title`. `type`: `blocked | needs-decision | sign-off | fyi` — *blocked*
   (you're stuck), *needs-decision* (pick a path), *sign-off* (approve before you proceed), *fyi* (a
-  non-blocking heads-up — no action required). (`confirm-assumption` still validates but is
-  **deprecated** — use `needs-decision` or `fyi`.)
+  non-blocking heads-up — no action required).
 - **Address it with `to`** when you know who you need: `"manager"` = the human accountable for your
   *work* (decisions, sign-offs on output) · `"builder"` = the human who maintains *you* (you're
   broken, credentials, **self-edit/logic-change flags**). Omit it if genuinely either — readers
@@ -365,10 +365,38 @@ The line it writes (the hand-authored shape):
                     "note": "confirmed in terminal" } }
   ```
 
-  `resolution` says how it closed: `chosen` = the option taken (verbatim); `via` = `"human"`
-  (someone told you out-of-band) · `"self"` (the blocker cleared on its own) · `"figs"` (reserved
-  for answers pulled through Figs); `by` = who, as best you know. A bare string works as a
-  shorthand note. Strictly one-way today — the human acts in their own workflow.
+  `resolution` says how it closed: `chosen` = the option taken (verbatim); `via` = `"figs"`
+  (the answer came through your inbox — **the CLI writes this for you**, citing the exact
+  answer event in `resolution.answer`: verified attribution, by mechanism) · `"human"` (someone
+  told you out-of-band, self-reported) · `"self"` (the blocker cleared on its own); `by` = who,
+  as best you know (auto-filled from the event on the figs path). A bare string works as a
+  shorthand note.
+
+## Your inbox — answers come to you (`figs inbox`)
+
+**Start every session with `figs inbox`.** Your humans answer your asks in the Figs app —
+answers, approvals, change requests, rejections — and the inbox is where you read them. It's a
+**pure read** (writes nothing): every ask of yours with thread activity, each with your humans'
+words **verbatim** and the exact next command.
+
+```
+figs inbox                 # the list: answered · rejected-to-acknowledge · still waiting
+figs inbox <ask-id>        # the handoff package for one ask
+```
+
+The package assumes you have **zero context** (you may be a fresh session, or a different
+machine): the full ask, the whole thread, and the ask's attached artifacts **restored into
+`.figs/artifacts/`** (hash-verified; a local file with different content is never clobbered).
+Read it, verify any prerequisites the ask stated, do the work, then close:
+
+- approved / answered → do it, then `figs report --resolves <ask-id>` (records the run AND
+  closes the ask, citing the event — `via: "figs"`, automatic);
+- changes requested → revise, then re-raise **on the same id** (`figs ask <type> --id <ask-id> …`);
+- rejected → acknowledge with `figs resolve <ask-id> --rejected` (the human already closed it;
+  this records your own account, citing their event).
+
+An ask answered on another machine works too — `resolve` fetches your own record home first,
+then folds the close onto it.
 
 ## `artifacts/` — the rendered files you produce
 
