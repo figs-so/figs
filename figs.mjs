@@ -148,12 +148,14 @@ const COMMANDS = {
     eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run last',
   },
   resolve: {
-    args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn]",
-    flags: ["--chosen", "--by", "--note", "--withdrawn", "--no-push"],
+    args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn|--rejected]",
+    flags: ["--chosen", "--by", "--note", "--withdrawn", "--rejected", "--no-push"],
     desc: "close an ask — appends the resolution fold line and pushes",
     more: [
       "--chosen must quote one of the ask's options[] verbatim (checked).",
-      "--withdrawn = the ask is no longer needed, nobody acted (don't mark resolved).",
+      "Three closes, by who ended it: resolved (default — the need was met) ·",
+      "--withdrawn (YOU retracted it; nobody acted) · --rejected (a HUMAN declined",
+      "it — record their out-of-band no; rejected is terminal, re-raising = a new ask).",
       "Use `figs report --resolves <ask-id>` instead when a run did the work.",
     ],
     eg: 'figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"',
@@ -234,7 +236,9 @@ function positional() {
   }
   return undefined
 }
-const BOOLEAN_FLAGS = new Set(["--no-push", "--stdin", "--withdrawn", "--json", "-h", "--help"])
+const BOOLEAN_FLAGS = new Set([
+  "--no-push", "--stdin", "--withdrawn", "--rejected", "--json", "-h", "--help",
+])
 
 /** ISO-8601 with the machine's real UTC offset (never the agent's guess). */
 function nowIso() {
@@ -258,7 +262,7 @@ function genId(prefix) {
 // and flag typos get wrong, with errors that teach the fix.
 const ASK_TYPES = ["blocked", "needs-decision", "sign-off", "fyi"]
 const RUN_STATUSES = ["ok", "warn", "fail"]
-const ASK_STATUSES = ["open", "resolved", "withdrawn"]
+const ASK_STATUSES = ["open", "resolved", "withdrawn", "rejected"]
 const TO_VALUES = ["manager", "builder"]
 const ARTIFACT_EXTS = new Set([
   ".html", ".md", ".txt", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
@@ -1099,9 +1103,12 @@ function captureCommit() {
 }
 
 // ---------- the resolution fold (shared by `resolve` and `report --resolves`) -
-function buildResolution(askId, { chosen, by, note, withdrawn }) {
-  if (withdrawn && chosen) {
-    die("--withdrawn and --chosen are mutually exclusive (withdrawn = the ask is no longer needed, nobody acted)")
+function buildResolution(askId, { chosen, by, note, withdrawn, rejected }) {
+  if (withdrawn && rejected) {
+    die("--withdrawn and --rejected are different closes: withdrawn = YOU retracted the ask; rejected = a HUMAN declined it. Pick the one that's true.")
+  }
+  if ((withdrawn || rejected) && chosen) {
+    die(`--chosen marks the need as met — it can't combine with ${withdrawn ? "--withdrawn" : "--rejected"} (use --note for the account)`)
   }
   const asks = foldById(readJsonl("asks.jsonl"))
   const ask = asks.find((a) => a.id === askId)
@@ -1125,10 +1132,14 @@ function buildResolution(askId, { chosen, by, note, withdrawn }) {
   if (by) resolution.by = by
   if (note) resolution.note = note
   // `via` says where the unblock came from; out-of-band human answers are
-  // "human". Set it only when there's evidence of one (a chosen/by), never on
-  // withdrawn (nobody acted — that's the point).
-  if (!withdrawn && (chosen || by)) resolution.via = "human"
-  const line = { id: askId, status: withdrawn ? "withdrawn" : "resolved" }
+  // "human". A rejection is inherently a human's call; otherwise set it only
+  // when there's evidence of one (a chosen/by), never on withdrawn (nobody
+  // acted — that's the point).
+  if (rejected || (!withdrawn && (chosen || by))) resolution.via = "human"
+  const line = {
+    id: askId,
+    status: withdrawn ? "withdrawn" : rejected ? "rejected" : "resolved",
+  }
   if (Object.keys(resolution).length) line.resolution = resolution
   return { line, warnings }
 }
@@ -1274,6 +1285,7 @@ async function resolveCmd() {
     by: flag("--by"),
     note: flag("--note"),
     withdrawn: hasFlag("--withdrawn"),
+    rejected: hasFlag("--rejected"),
   })
   for (const w of warnings) console.warn(`figs: ! ${w}`)
   appendJsonl("asks.jsonl", line)

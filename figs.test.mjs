@@ -510,7 +510,7 @@ test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async 
     token: "t",
   })
   assert.equal(conflict.code, 1)
-  assert.match(conflict.out, /mutually exclusive/)
+  assert.match(conflict.out, /can't combine with --withdrawn/)
 
   const r = await run(["resolve", "a-old", "--withdrawn", "--note", "no longer needed", "--no-push"], {
     cwd: repo,
@@ -593,4 +593,27 @@ test("report captures the session block from a Claude Code transcript", async ()
   assert.equal(s.startedAt, "2026-06-11T01:00:00Z")
   assert.deepEqual(s.tokens, { input: 110, output: 55, cacheRead: 1100, cacheWrite: 220 })
   rmSync(home, { recursive: true, force: true })
+})
+
+test("resolve --rejected records the human's no (terminal close, via human)", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-no","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"Send the emails"}\n`,
+  )
+  const conflict = await run(["resolve", "a-no", "--rejected", "--withdrawn"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(conflict.code, 1)
+  assert.match(conflict.out, /different closes/)
+
+  const r = await run(
+    ["resolve", "a-no", "--rejected", "--by", "Sarah", "--note", "not this quarter", "--no-push"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "rejected")
+  assert.deepEqual(fold.resolution, { by: "Sarah", note: "not this quarter", via: "human" })
 })

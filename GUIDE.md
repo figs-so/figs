@@ -350,8 +350,11 @@ The line it writes (the hand-authored shape):
   ```
 
   `--chosen` is checked **verbatim** against the ask's `options[]` (a paraphrase gets a
-  "did you mean…"). Use `--withdrawn` when the ask is simply no longer needed — don't mark it
-  resolved if nobody acted. When a *run* did the work, prefer `figs report --resolves <ask-id>`
+  "did you mean…"). **Three closes — pick by who ended it:** `resolved` (default — the need was
+  met) · `--withdrawn` (**you** retracted it; nobody acted) · `--rejected` (**a human** declined
+  it). The gray zone: a human says "don't bother" out-of-band → that's `--rejected`, not
+  withdrawn — if a human declined, record the decline. Rejected is terminal on that id;
+  re-raising is a new ask. When a *run* did the work, prefer `figs report --resolves <ask-id>`
   — one stroke records the run and closes the ask. Hand-authored, the close is an appended fold
   line (by `id`; never edit old lines):
 

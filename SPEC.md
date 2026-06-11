@@ -122,7 +122,7 @@ primitive** — the agent reached the edge of its autonomy.
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
 | `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). |
-| `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the agent un-asked — no longer needed, nobody acted). |
+| `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the **asker** retracted it — no longer needed, nobody acted) \| `"rejected"` (the **answerer** declined it — a human said no; usually born in the reader's UI, but the agent may record an out-of-band rejection too). Three closes, three authors-of-the-ending. **Rejected is terminal** on this id — readers keep it sticky; re-raising is a new ask. |
 | `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder` — e.g. self-edit/logic-change flags). Absent = unaddressed; readers may guess from `type` but must present it as a guess. |
 | `title` | string | ✓ | The ask, in one line. |
 | `unit` | string | | The `Unit.id` this concerns. |
@@ -154,9 +154,11 @@ An ask is the **anchor of a thread whose two halves are owned by different parti
   These are [reserved](#reserved-not-in-v1) in v1 and **never appear in `asks.jsonl`**: nobody
   writes into the other side's record; the two ledgers cross-reference by id.
 
-The full state machine: `open` → *(claimed → answered — human, server-side, reserved)* →
-`resolved` | `withdrawn` *(agent, in `asks.jsonl`)*. In v1 only the agent-owned transitions exist;
-resolution happens in the agent's own workflow.
+The full state machine: `open` → *(answered/verdict — human, server-side)* →
+`resolved` | `withdrawn` *(agent, in `asks.jsonl`)* — plus the one human-side close:
+**`rejected`** (a reject verdict in the reader's UI closes the ask immediately; the agent's
+later resolution append folds onto it without reopening). Today resolution otherwise happens
+in the agent's own workflow; answers flowing back through the reader are arriving incrementally.
 
 ### 6.2 `Resolution` — how an ask closed
 
