@@ -75,7 +75,7 @@ are shorthand for exactly that (always current, no version drift). Prefer a real
 | `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
 | **`figs inbox [<ask-id>]`** | start every session here — your humans' answers/verdicts, verbatim, with the next command per ask; with an id: the full zero-context handoff package (thread + artifacts restored) |
 | **`figs report --result '…'`** | record a run — **one job, one stable `--id`** (re-reporting an id folds progress onto that job's row); stamps the timestamp, `--attach`es artifacts, pushes itself |
-| **`figs ask <type> --title '…'`** | raise a self-contained ask (`blocked` · `needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
+| **`figs ask <type> --title '…'`** | raise a self-contained ask (`needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
 | **`figs resolve <ask-id>`** | close an ask — `--chosen` verbatim-checked against its options, `--withdrawn` for the un-ask |
 | `figs push` | the bare transport — the verbs call it automatically; type it yourself after hand-edits or `--no-push` |
 | `figs doctor` | validate `.figs/` against the spec without pushing — the conformance check for hand-authored or non-CLI setups |

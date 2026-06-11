@@ -265,7 +265,7 @@ test("push passes asks through verbatim — to, withdrawn, structured resolution
     join(repo, ".figs/asks.jsonl"),
     `{"id":"a1","ts":"2026-06-10T00:00:00Z","type":"needs-decision","to":"manager","title":"Pick a path","options":["A","B"]}\n` +
       `{"id":"a1","status":"resolved","resolution":{"chosen":"A","via":"human","by":"Sarah"}}\n` + // folds onto a1
-      `{"id":"a2","ts":"2026-06-10T01:00:00Z","type":"blocked","to":"builder","title":"Creds expired","status":"withdrawn","resolution":"creds rotated themselves"}\n`,
+      `{"id":"a2","ts":"2026-06-10T01:00:00Z","type":"needs-decision","to":"builder","title":"Creds expired","status":"withdrawn","resolution":"creds rotated themselves"}\n`,
   )
   const r = await run(["push"], { cwd: repo, token: "t" })
   assert.equal(r.code, 0, r.out)
@@ -527,7 +527,7 @@ test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async 
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"blocked","title":"Stuck"}\n`,
+    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"needs-decision","title":"Stuck"}\n`,
   )
   const conflict = await run(["resolve", "a-old", "--withdrawn", "--chosen", "x"], {
     cwd: repo,
@@ -704,7 +704,7 @@ test("inbox lists sections with the exact next command per state", async () => {
         { ...approval, id: "ev-rej", verdict: "rejected", text: "not needed anymore" },
       ],
     }),
-    inboxAsk({ id: "ask-quiet", type: "blocked", title: "Stuck on creds", events: [] }),
+    inboxAsk({ id: "ask-quiet", type: "needs-decision", title: "Stuck on creds", events: [] }),
   ]
   const r = await run(["inbox"], { cwd: repo, token: "t" })
   assert.equal(r.code, 0, r.out)
@@ -715,6 +715,44 @@ test("inbox lists sections with the exact next command per state", async () => {
   assert.match(r.out, /real work → do the job, figs report it under its own --id/)
   assert.match(r.out, /figs resolve ask-no --rejected/)
   assert.match(r.out, /Stuck on creds \(raised /)
+})
+
+test("inbox renders a qualified verdict — verdict + chosen + note in one event", async () => {
+  // Sign-off options are answer paths: the human's verdict can cite one
+  // verbatim. One composed event carries all three; the inbox prints them
+  // together and the next-command suggests closing with that exact path.
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "ask-q",
+      options: ["Approved — file the 15", "Hold — wait for Capital Grille"],
+      events: [
+        {
+          ...approval,
+          id: "ev-q-1",
+          chosen: "Approved — file the 15",
+          text: "good catch on the duplicate",
+        },
+      ],
+    }),
+  ]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /approved by Sarah \(manager\)/)
+  assert.match(r.out, /→ "Approved — file the 15" · "good catch on the duplicate"/)
+  assert.match(r.out, /figs resolve ask-q --chosen 'Approved — file the 15'/)
+})
+
+test("ask blocked teaches the merge into needs-decision", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "blocked", "--title", "Stuck on creds", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /"blocked" was folded into needs-decision/)
+  assert.match(r.out, /RUN's status/)
 })
 
 test("inbox is empty-friendly and honest about truncation", async () => {
@@ -821,13 +859,47 @@ test("resolve auto-cites the answer event it acted on (via figs, verified)", asy
   })
 })
 
+test("resolve auto-cites a qualified verdict by its chosen path", async () => {
+  // A verdict event may carry `chosen` (sign-off answer paths). The chosen-match
+  // search must find it — the cite is by text, not by event kind.
+  resetInbox()
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-qv","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"File May","options":["Approved — file the 15","Hold"]}\n`,
+  )
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "a-qv",
+      title: "File May",
+      options: ["Approved — file the 15", "Hold"],
+      events: [
+        { ...approval, id: "ev-old", chosen: null, text: "looking…", verdict: null, kind: "answer" },
+        { ...approval, id: "ev-qv-2", chosen: "Approved — file the 15", text: null },
+      ],
+    }),
+  ]
+  const r = await run(
+    ["resolve", "a-qv", "--chosen", "Approved — file the 15", "--no-push"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.deepEqual(fold.resolution, {
+    chosen: "Approved — file the 15",
+    via: "figs",
+    answer: "ev-qv-2",
+    by: "Sarah",
+  })
+})
+
 test("resolve self-fetches an ask raised elsewhere, then folds the close onto it", async () => {
   resetInbox()
   const repo = await pushableRepo()
   mock.inbox.asks = [
     inboxAsk({
       id: "a-remote",
-      type: "blocked",
+      type: "needs-decision",
       title: "Creds expired",
       events: [
         {
@@ -886,7 +958,7 @@ test("resolve falls back to via human when the inbox has nothing (offline path)"
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"blocked","title":"Stuck"}\n`,
+    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"needs-decision","title":"Stuck"}\n`,
   )
   const r = await run(["resolve", "a-ob", "--by", "Sarah", "--no-push"], {
     cwd: repo,

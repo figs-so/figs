@@ -125,7 +125,7 @@ primitive** — the agent reached the edge of its autonomy.
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
-| `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). |
+| `type` | enum | ✓ | `needs-decision` \| `sign-off` \| `fyi` — **the type is the answer contract**: *needs-decision* wants an answer (an option or free text), *sign-off* wants a verdict (approve / request changes / reject), *fyi* wants nothing (a for-the-record note; readers never count it as needing a human). `blocked` was **folded into `needs-decision`** (2026-06, pre-launch in-place edit): a stuck job is the *run's* `status`, not an ask type. |
 | `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the **asker** retracted it — no longer needed, nobody acted) \| `"rejected"` (the **answerer** declined it — a human said no; usually born in the reader's UI, but the agent may record an out-of-band rejection too). Three closes, three authors-of-the-ending. **Rejected is terminal** on this id — readers keep it sticky; re-raising is a new ask. |
 | `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder` — e.g. self-edit/logic-change flags). Absent = unaddressed; readers may guess from `type` but must present it as a guess. |
 | `title` | string | ✓ | The ask, in one line. |
@@ -133,7 +133,7 @@ primitive** — the agent reached the edge of its autonomy.
 | `run` | string | | The run `id` this ask was raised during (the work that surfaced it). **Optional** — asks also arise outside runs (a self-found issue, expired credentials). |
 | `found` | string | | What the agent found / why it's stuck. |
 | `need` | string | | What it needs from the human. |
-| `options` | string[] | | Candidate resolutions — **short, stable, quotable** strings: a future answer references one *verbatim* (see [§6.2](#62-resolution--how-an-ask-closed)). |
+| `options` | string[] | | Candidate resolutions — **short, stable, quotable** strings: an answer references one *verbatim* (see [§6.2](#62-resolution--how-an-ask-closed)). On a **sign-off** they are **answer paths** — qualified verdicts the human's verdict can cite verbatim alongside approve/request-changes (e.g. `"Approved — file the 15 ready charges"`). |
 | `details` | `{ l, v }[]` | | Labelled facts (e.g. amount at risk). |
 | `refs` | `{ label, artifact? }[]` | | Pointers to artifacts that back the ask. |
 | `resolution` | string \| `Resolution` | | The agent's account of the close ([§6.2](#62-resolution--how-an-ask-closed)). A bare string is shorthand for `{ "note": … }`. |
@@ -170,9 +170,9 @@ in the agent's own workflow; answers flowing back through the reader are arrivin
 |---|---|---|
 | `note` | string | The agent's one-line account of the close. |
 | `chosen` | string | The decision taken — **verbatim** one of the ask's `options[]`. |
-| `via` | `"figs"` \| `"human"` \| `"self"` | Where the unblock came from: an answer pulled from Figs (verifiable, future) · answered out-of-band (self-reported) · the blocker cleared on its own. |
+| `via` | `"figs"` \| `"human"` \| `"self"` | Where the unblock came from: an answer pulled from Figs (verified — see `answer`) · answered out-of-band (self-reported) · the blocker cleared on its own. |
 | `by` | string | Who answered, as the agent knows it (self-reported; verified attribution only exists for `via: "figs"`). |
-| `answer` | string | **Reserved** — the Figs answer-event id the agent acted on, once answer-down ships. |
+| `answer` | string | The Figs answer-event id the agent acted on — written by `figs resolve` when the answer came through the inbox (attribution by mechanism, never typed). The cited event may be an answer **or a qualified verdict** (a verdict carrying `chosen`). |
 
 All fields optional; a bare-string `resolution` is shorthand for `{ "note": … }` and readers
 normalize it to the object form.

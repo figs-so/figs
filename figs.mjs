@@ -139,13 +139,16 @@ const COMMANDS = {
     ],
     desc: "raise an ask — one self-contained line in asks.jsonl, pushed so a human sees it",
     more: [
-      "<type> is one of: blocked · needs-decision · sign-off · fyi.",
+      "<type> = the answer contract: needs-decision (give me an answer) ·",
+      "sign-off (give me a verdict) · fyi (no answer — a for-the-record note).",
       "Make it self-contained — a future session with zero context (or another human)",
       "must be able to act from this record alone: --found (what you saw), --need (what",
       "you need), --option (repeatable; short, stable, quotable — answers cite one",
       "verbatim), --detail 'Label=Value' (repeatable), --attach <file> (repeatable;",
       "for sign-offs attach the exact content for review + a brief: what to do once",
       "approved and what it requires).",
+      "On a sign-off, --option entries are answer paths — the human's verdict can",
+      "cite one verbatim ('Approved — file the 15 ready charges').",
       "--run <run-id> links the run this came out of — explicit id only (other",
       "sessions may report concurrently; `figs report` prints the id it wrote).",
       "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
@@ -283,7 +286,11 @@ function genId(prefix) {
 // ---------- local validation (the spec's common mistakes, caught on write) ----
 // The server's schema stays the source of truth; these catch what hand-authors
 // and flag typos get wrong, with errors that teach the fix.
-const ASK_TYPES = ["blocked", "needs-decision", "sign-off", "fyi"]
+// Three types = three answer contracts: needs-decision (give me an answer) ·
+// sign-off (give me a verdict) · fyi (no answer — a for-the-record note).
+// "blocked" was folded into needs-decision in 0.6.0: a stuck JOB is the run's
+// status, not an ask type; what you need from a human is a needs-decision.
+const ASK_TYPES = ["needs-decision", "sign-off", "fyi"]
 const RUN_STATUSES = ["ok", "warn", "fail"]
 const ASK_STATUSES = ["open", "resolved", "withdrawn", "rejected"]
 const TO_VALUES = ["manager", "builder"]
@@ -327,6 +334,10 @@ function validateAsk(a) {
   if (!a.type) {
     issues.push(
       `${label}: missing required "type" — was it raised on another machine? (closing it from here needs the full record; cross-machine fetch is coming)`,
+    )
+  } else if (a.type === "blocked") {
+    issues.push(
+      `${label}.type: "blocked" was folded into needs-decision — a stuck job is the RUN's status (re-report --status onto the same job id); what you need from a human is a needs-decision ask`,
     )
   } else checkEnum(issues, a, "type", ASK_TYPES, label)
   if (!a.title) issues.push(`${label}: missing required "title"`)
@@ -1060,10 +1071,12 @@ function nextMove(a) {
   const last = a.events[a.events.length - 1]
   if (!last) return "waiting on your human — nothing for you to do"
   if (last.kind === "verdict" && last.verdict === "approved") {
+    // A qualified verdict carries the chosen answer path — cite it in the close.
+    const chosen = last.chosen ? ` --chosen '${last.chosen}'` : ""
     return (
       `approved — verify any prerequisites in the ask, then fork on what it unlocked:` +
-      `\n      nothing left to do → figs resolve ${a.id}` +
-      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id} --note 'job <id>'`
+      `\n      nothing left to do → figs resolve ${a.id}${chosen}` +
+      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id}${chosen} --note 'job <id>'`
     )
   }
   if (last.kind === "verdict" && last.verdict === "changes_requested") {
@@ -1259,9 +1272,9 @@ async function buildResolution(askId, { chosen, by, note, withdrawn, rejected })
   // chosen matches, else the latest event (e.g. the approval, the rejection).
   const events = serverAsk?.events ?? []
   if (!withdrawn && events.length) {
-    const match = chosen
-      ? [...events].reverse().find((e) => e.kind === "answer" && e.chosen === chosen)
-      : null
+    // Any human event can carry the chosen path — an answer, or a qualified
+    // verdict (verdict + chosen together). Match on the text, not the kind.
+    const match = chosen ? [...events].reverse().find((e) => e.chosen === chosen) : null
     const cited = match ?? events[events.length - 1]
     resolution.via = "figs"
     resolution.answer = cited.id

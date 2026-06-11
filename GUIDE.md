@@ -345,17 +345,23 @@ The line it writes (the hand-authored shape):
 }
 ```
 
-- Required: `id`, `type`, `title`. `type`: `blocked | needs-decision | sign-off | fyi` — *blocked*
-  (you're stuck), *needs-decision* (pick a path), *sign-off* (approve before you proceed), *fyi* (a
-  non-blocking heads-up — no action required).
+- Required: `id`, `type`, `title`. `type` is **the answer contract** — what you want back:
+  `needs-decision` (an answer: a decision, an input, an unblock) · `sign-off` (a verdict:
+  approve / request changes / reject) · `fyi` (nothing — a for-the-record note; it never counts
+  as needing a human). There is no `blocked` type: a stuck **job** is the *run's* status
+  (re-report `--status` onto the same job id); the thing you need from a human is a
+  `needs-decision`. Rule of thumb: **status of work → run result; for-the-record flag → fyi.**
 - **Address it with `to`** when you know who you need: `"manager"` = the human accountable for your
   *work* (decisions, sign-offs on output) · `"builder"` = the human who maintains *you* (you're
   broken, credentials, **self-edit/logic-change flags**). Omit it if genuinely either — readers
   will guess from the type, labeled as a guess.
 - Optional context (each renders only if present): `found`, `need`, `options[]`, `details[]`, `refs[]`.
   Write `options[]` as **short, stable, quotable** strings — a future answer (and your own
-  `resolution.chosen`) references one *verbatim*. An ask can also carry the same `session` block as
-  a run — useful, since asks mark the moments a human will want to trace.
+  `resolution.chosen`) references one *verbatim*. On a **sign-off**, options are **answer
+  paths**: qualified verdicts the human can cite alongside approve / request-changes
+  (`"Approved — file the 15 ready charges"` / `"Hold — wait for Capital Grille"`) — write them
+  so each one tells you exactly what to do next. An ask can also carry the same `session` block
+  as a run — useful, since asks mark the moments a human will want to trace.
 - **You own the lifecycle — close it honestly.** The easy path:
 
   ```
