@@ -400,11 +400,18 @@ test("attach refuses to overwrite an artifact with different content (immutable)
   )
 })
 
-test("ask raises a self-contained ask and links --run last", async () => {
+test("ask raises a self-contained ask linked to its run by explicit id", async () => {
   mock.lastIngest = null
   const repo = await pushableRepo()
   writeFileSync(join(repo, "previews.html"), "<p>emails</p>")
   await run(["report", "--result", "drafted", "--id", "recon-1", "--no-push"], { cwd: repo, token: "t" })
+  // "last" is deliberately unsupported — concurrent sessions report in parallel.
+  const guessy = await run(["ask", "fyi", "--title", "x", "--run", "last"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(guessy.code, 1)
+  assert.match(guessy.out, /explicit run id/)
   const r = await run(
     [
       "ask", "sign-off",
@@ -414,7 +421,7 @@ test("ask raises a self-contained ask and links --run last", async () => {
       "--detail", "Total overdue=$4,820",
       "--attach", join(repo, "previews.html"),
       "--to", "manager",
-      "--run", "last",
+      "--run", "recon-1",
     ],
     { cwd: repo, token: "t" },
   )
@@ -423,7 +430,7 @@ test("ask raises a self-contained ask and links --run last", async () => {
   assert.match(ask.id, /^ask-/)
   assert.equal(ask.type, "sign-off")
   assert.equal(ask.status, "open")
-  assert.equal(ask.run, "recon-1", "--run last resolves to the newest local run")
+  assert.equal(ask.run, "recon-1")
   assert.deepEqual(ask.options, ["Send all 10", "Hold the two large ones"])
   assert.deepEqual(ask.details, [{ l: "Total overdue", v: "$4,820" }])
   assert.deepEqual(ask.refs, [{ label: "previews.html", artifact: "previews.html" }])

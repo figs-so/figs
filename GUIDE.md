@@ -306,12 +306,13 @@ figs ask needs-decision --title "No bridge rule for prefixed invoice numbers" \
   --need "Confirm the bridge rule for prefixed invoice numbers." \
   --option "Strip the alpha prefix" --option "Use a mapping you provide" \
   --detail "Amount at risk=$50.0M" --attach ./acme-2025-11.html \
-  --to manager --run last
+  --to manager --run acme-2025-11
 ```
 
 Same scribe contract as `report`: id/ts/session stamped, attachments copied + linked as `refs`,
-validated, pushed. `--run last` links the run this came out of; for long texts use `--stdin` with
-a JSON object. **For a `sign-off`, attach the exact content to approve** (the email bodies, the
+validated, pushed. `--run <run-id>` links the run this came out of — **the explicit id only**
+(`figs report` prints the id it wrote; other sessions of you may be reporting concurrently, so
+"the latest run" is never guessed). For long texts use `--stdin` with a JSON object. **For a `sign-off`, attach the exact content to approve** (the email bodies, the
 recipient list) **plus a brief** — what to do once approved and what it requires (creds, files,
 data freshness) — so the session that picks up the approval can verify and act from the record
 alone.

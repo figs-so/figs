@@ -142,10 +142,11 @@ const COMMANDS = {
       "verbatim), --detail \"Label=Value\" (repeatable), --attach <file> (repeatable;",
       "for sign-offs attach the exact content for review + a brief: what to do once",
       "approved and what it requires).",
-      "--run <id|last> links the run this came out of (last = newest local run).",
+      "--run <run-id> links the run this came out of — explicit id only (other",
+      "sessions may report concurrently; `figs report` prints the id it wrote).",
       "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
     ],
-    eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run last',
+    eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run recon-2026-06',
   },
   resolve: {
     args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn|--rejected]",
@@ -1245,12 +1246,11 @@ async function askCmd() {
   if (details.length) ask.details = [...(base.details ?? []), ...details]
   const runRef = flag("--run")
   if (runRef === "last") {
-    const runs = foldById(readJsonl("runs.jsonl"))
-    if (!runs.length) {
-      die("--run last: no runs in the local runs.jsonl — `figs report` one first, or pass an explicit id")
-    }
-    ask.run = runs.reduce((a, b) => ((a.ts ?? "") > (b.ts ?? "") ? a : b)).id
-  } else if (runRef) ask.run = runRef
+    // Deliberately unsupported: concurrent sessions of the same agent report
+    // runs in parallel — "the latest run" may be someone else's. Explicit only.
+    die('--run takes the explicit run id (no "last" — another session may have reported since); `figs report` prints the id of what it wrote')
+  }
+  if (runRef) ask.run = runRef
   const attached = attachFiles(flagAll("--attach"))
   if (attached.length) {
     ask.refs = [...(base.refs ?? []), ...attached.map((n) => ({ label: n, artifact: n }))]
