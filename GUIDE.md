@@ -107,8 +107,8 @@ and paste this block into it, verbatim:
 ## Figs
 This repo publishes to **Figs**, where your team sees your work and answers your asks.
 See `.figs/GUIDE.md` to orient and `.figs/CONTRACT.md` for what to surface. Day to day:
-**start every session with `figs inbox`** (your humans' answers arrive there); end every
-sitting of work with `figs report`; raise what needs a human with `figs ask`; close answered
+**start every session with `figs inbox`** (your humans' answers arrive there); record every
+job with `figs report`; raise what needs a human with `figs ask`; close answered
 asks with `figs resolve` (they push themselves). Don't delete this block.
 <!-- figs:end -->
 ```
@@ -238,14 +238,20 @@ their call what's safe to show.
 
 **4. Then instrument + wire the loop.** Once you agree what to surface: add whatever recording
 supports it (this is the part that may change how you work), and wire the loop into your own
-operating doc — **end every sitting of real work with `figs report …`** (it pushes itself; bare
+operating doc — **record every job with `figs report …`** (it pushes itself; bare
 `figs push` is only for after hand-edits or `--no-push` batching). A report with nothing new to
 say is pointless — the loop only matters once there's something real to record.
 
 Capture all four in `.figs/CONTRACT.md`: **fit verdict · what you publish · what you hold back ·
 how you're instrumented + where push is wired.** Keep it honest and current.
 
-## `runs.jsonl` — what you did (report one run per sitting of work)
+## `runs.jsonl` — what you did (one run = one job)
+
+**A run is a job** — a unit of work your *manager* would recognize ("recon — Acme — November"),
+under a stable, meaningful id; **the runs list is the job list**. Sittings and sessions are your
+plumbing, not theirs: stopping to wait for a human never mints a run — report what's true so far
+*onto the job's id* and the row evolves (records fold by `id`, so progress is an append:
+`status: "warn"` → `"ok"`).
 
 **The easy path** — one command, after the work:
 
@@ -257,9 +263,8 @@ figs report --result "88% matched · 31 keys flagged" --unit acme --period 2025-
 The CLI writes the line below for you — id and `ts` stamped, the `session` trace captured
 automatically from your runtime's own records (Claude Code and Codex transcripts; plus your repo's
 commit), the attachment copied into `artifacts/` and linked, then pushed. `--attach` repeats for
-multiple files; `--id` only when you *want* a stable id (re-running the same job for the same
-period then updates the same run); `--resolves <ask-id>` when this run did the thing an answered
-ask was waiting on — it closes the ask in the same stroke.
+multiple files; `--id` is the job's stable id — name it well (`recon-acme-2026-11`); reporting
+the same id again folds onto that job's row (progress, re-runs for the same period).
 
 The line it writes (hand-author this shape if you're not using the verb):
 
@@ -269,8 +274,8 @@ The line it writes (hand-author this shape if you're not using the verb):
 
 - `id` ✅ and `ts` ✅ (ISO-8601 with offset) are required. `status`: `ok | warn | fail` (default
   `ok`) — that's the **outcome**, never a lifecycle: a run is a complete fact when reported;
-  nothing "closes" a run. One sitting of work = one run — when you stop (including stopping to
-  wait for a human), report what's true so far.
+  nothing "closes" a run. One run = one job — pausing to wait for a human isn't a new run;
+  report what's true so far onto the same job id.
 - `unit` links to a unit `id`. `result` is the one-line outcome. `artifact` is a file in
   `artifacts/` (`artifacts` — an array — for several).
 - **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. **Never use
@@ -355,9 +360,10 @@ The line it writes (the hand-authored shape):
   met) · `--withdrawn` (**you** retracted it; nobody acted) · `--rejected` (**a human** declined
   it). The gray zone: a human says "don't bother" out-of-band → that's `--rejected`, not
   withdrawn — if a human declined, record the decline. Rejected is terminal on that id;
-  re-raising is a new ask. When a *run* did the work, prefer `figs report --resolves <ask-id>`
-  — one stroke records the run and closes the ask. Hand-authored, the close is an appended fold
-  line (by `id`; never edit old lines):
+  re-raising is a new ask. A close is **not** a job — `resolve` never writes a run. When the
+  answer unlocked real work, do the job, `figs report` it under its own id, *then* resolve
+  (cite the job in `--note` so a reader can find the work). Hand-authored, the close is an
+  appended fold line (by `id`; never edit old lines):
 
   ```json
   { "id": "acme-bridge", "status": "resolved",
@@ -389,8 +395,10 @@ machine): the full ask, the whole thread, and the ask's attached artifacts **res
 `.figs/artifacts/`** (hash-verified; a local file with different content is never clobbered).
 Read it, verify any prerequisites the ask stated, do the work, then close:
 
-- approved / answered → do it, then `figs report --resolves <ask-id>` (records the run AND
-  closes the ask, citing the event — `via: "figs"`, automatic);
+- approved / answered → fork on what the answer unlocked: nothing left to do →
+  `figs resolve <ask-id>` right away; real work → do the job, `figs report` it under its own
+  id, then `figs resolve <ask-id> --note "job <id>"`. Either way the close cites the event it
+  acted on (`via: "figs"`, automatic);
 - changes requested → revise, then re-raise **on the same id** (`figs ask <type> --id <ask-id> …`);
 - rejected → acknowledge with `figs resolve <ask-id> --rejected` (the human already closed it;
   this records your own account, citing their event).

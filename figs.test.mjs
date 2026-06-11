@@ -557,23 +557,14 @@ test("resolve warns (but writes) when the ask isn't local", async () => {
   assert.equal(lastLine(repo, "asks.jsonl").id, "ghost-ask")
 })
 
-test("report --resolves records the run and closes the ask in one stroke", async () => {
-  mock.lastIngest = null
+test("report doesn't close asks — a close is not a job (resolve is the one closing verb)", async () => {
   const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"send-ok","ts":"2026-06-10T00:00:00Z","type":"sign-off","title":"Send 10 reminders"}\n`,
-  )
   const r = await run(
-    ["report", "--result", "sent 10/10", "--resolves", "send-ok", "--by", "Sarah"],
+    ["report", "--result", "sent 10/10", "--resolves", "send-ok"],
     { cwd: repo, token: "t" },
   )
-  assert.equal(r.code, 0, r.out)
-  const runRec = lastLine(repo, "runs.jsonl")
-  assert.equal(runRec.resolves, "send-ok")
-  const askFold = mock.lastIngest.body.asks.find((a) => a.id === "send-ok")
-  assert.equal(askFold.status, "resolved")
-  assert.equal(askFold.resolution.via, "human")
+  assert.equal(r.code, 1)
+  assert.match(r.out, /unknown flag "--resolves"/)
 })
 
 test("push refuses a malformed hand-written line with a teaching error", async () => {
@@ -699,7 +690,8 @@ test("inbox lists sections with the exact next command per state", async () => {
   assert.match(r.out, /1 answered · 1 rejected to acknowledge · 1 waiting on your human/)
   assert.match(r.out, /approved by Sarah \(manager\)/)
   assert.match(r.out, /"go ahead, BCC me on the big ones"/, "the human's words, verbatim")
-  assert.match(r.out, /figs report --resolves ask-ok/)
+  assert.match(r.out, /nothing left to do → figs resolve ask-ok/)
+  assert.match(r.out, /real work → do the job, figs report it under its own --id/)
   assert.match(r.out, /figs resolve ask-no --rejected/)
   assert.match(r.out, /Stuck on creds \(raised /)
 })
@@ -739,7 +731,7 @@ test("inbox <id> prints the handoff package and restores refs (hash-verified)", 
     readFileSync(join(repo, ".figs/artifacts/previews.html"), "utf8"),
     "<p>emails</p>",
   )
-  assert.match(r.out, /verify any prerequisites.*figs report --resolves ask-pkg/)
+  assert.match(r.out, /verify any prerequisites[\s\S]*figs resolve ask-pkg/)
 })
 
 test("inbox <id> never clobbers a local artifact with different bytes", async () => {
@@ -846,7 +838,7 @@ test("resolve self-fetches an ask raised elsewhere, then folds the close onto it
   assert.equal(fold.resolution.answer, "ev-fix")
 })
 
-test("report --resolves cites the approval it executed", async () => {
+test("resolve cites the approval it acted on (post-job close)", async () => {
   resetInbox()
   mock.lastIngest = null
   const repo = await pushableRepo()
@@ -855,7 +847,7 @@ test("report --resolves cites the approval it executed", async () => {
     `{"id":"a-go","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"Send 10 reminders"}\n`,
   )
   mock.inbox.asks = [inboxAsk({ id: "a-go", events: [approval] })]
-  const r = await run(["report", "--result", "sent 10/10", "--resolves", "a-go"], {
+  const r = await run(["resolve", "a-go", "--note", "job reminders-2026-06"], {
     cwd: repo,
     token: "t",
   })
@@ -865,6 +857,7 @@ test("report --resolves cites the approval it executed", async () => {
   assert.equal(askFold.resolution.via, "figs")
   assert.equal(askFold.resolution.answer, "ev-approve-1")
   assert.equal(askFold.resolution.by, "Sarah")
+  assert.equal(askFold.resolution.note, "job reminders-2026-06")
 })
 
 test("resolve falls back to via human when the inbox has nothing (offline path)", async () => {

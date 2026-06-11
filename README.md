@@ -73,7 +73,8 @@ are shorthand for exactly that (always current, no version drift). Prefer a real
 | `figs login` / `logout` | device-flow browser approve / remove local token |
 | `figs workspaces [--json]` | list your workspaces (create one in the web app) |
 | `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
-| **`figs report --result "…"`** | record a run — stamps id + timestamp, auto-captures the session trace, `--attach`es artifacts, pushes itself (`--resolves <ask-id>` closes an ask in the same stroke) |
+| **`figs inbox [<ask-id>]`** | start every session here — your humans' answers/verdicts, verbatim, with the next command per ask; with an id: the full zero-context handoff package (thread + artifacts restored) |
+| **`figs report --result "…"`** | record a run — **one job, one stable `--id`** (re-reporting an id folds progress onto that job's row); stamps the timestamp, auto-captures the session trace, `--attach`es artifacts, pushes itself |
 | **`figs ask <type> --title "…"`** | raise a self-contained ask (`blocked` · `needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
 | **`figs resolve <ask-id>`** | close an ask — `--chosen` verbatim-checked against its options, `--withdrawn` for the un-ask |
 | `figs push` | the bare transport — the verbs call it automatically; type it yourself after hand-edits or `--no-push` |

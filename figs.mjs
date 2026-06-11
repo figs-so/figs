@@ -113,20 +113,23 @@ const COMMANDS = {
   report: {
     args: "--result <text> [options]",
     flags: [
-      "--result", "--id", "--unit", "--period", "--status", "--attach",
-      "--resolves", "--chosen", "--by", "--note", "--no-push",
+      "--result", "--id", "--unit", "--period", "--status", "--attach", "--no-push",
     ],
-    desc: "record a run — writes one line to runs.jsonl, stamps id/ts/session, pushes",
+    desc: "record a run — one job's row in runs.jsonl; stamps id/ts/session, pushes",
     more: [
+      "One run = one JOB — a unit of work your manager would recognize; the runs",
+      "list reads as the job list. Give a job a stable, meaningful --id",
+      "(recon-acme-2026-11); reporting the same id again folds onto that job's row",
+      "(progress evolves: blocked → ok). Sittings/sessions never mint runs —",
+      "stopping to wait for a human is not a job.",
       "You supply the content; the CLI does the bookkeeping (id, real-clock ts, session",
       "trace from your runtime's own records, validation, artifact copy, push).",
       "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
-      "--resolves <ask-id> also closes that ask (with optional --chosen/--by/--note).",
-      "--id only for deliberate stable ids (re-running the same job updates the same run).",
       "--no-push writes locally only; `figs push` publishes later.",
+      "Closing an ask is `figs resolve` — a close is not a job; never report one.",
       "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
     ],
-    eg: 'figs report --result "88% matched · 31 flagged" --attach ./acme-2025-11.html',
+    eg: 'figs report --id recon-acme-2026-11 --result "88% matched · 31 flagged" --attach ./acme-2025-11.html',
   },
   ask: {
     args: "<type> --title <text> [options]",
@@ -160,7 +163,7 @@ const COMMANDS = {
       "attached artifacts restored into .figs/artifacts/ (hash-verified) so a fresh",
       "session can act from the record alone.",
       "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged.",
-      "Reads only — closing still happens via figs resolve / figs report --resolves.",
+      "Reads only — closing still happens via figs resolve.",
     ],
     eg: "figs inbox",
   },
@@ -173,7 +176,9 @@ const COMMANDS = {
       "Three closes, by who ended it: resolved (default — the need was met) ·",
       "--withdrawn (YOU retracted it; nobody acted) · --rejected (a HUMAN declined",
       "it — record their out-of-band no; rejected is terminal, re-raising = a new ask).",
-      "Use `figs report --resolves <ask-id>` instead when a run did the work.",
+      "After an answer, fork on what it unlocked: nothing new → resolve right away;",
+      "real work → do the job, `figs report` it under its own id, THEN resolve —",
+      "cite the job id in --note so a reader can find the work.",
     ],
     eg: 'figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"',
   },
@@ -1166,12 +1171,16 @@ function nextMove(a) {
   const last = a.events[a.events.length - 1]
   if (!last) return "waiting on your human — nothing for you to do"
   if (last.kind === "verdict" && last.verdict === "approved") {
-    return `approved — verify any prerequisites in the ask, do it, then: figs report --resolves ${a.id}`
+    return (
+      `approved — verify any prerequisites in the ask, then fork on what it unlocked:` +
+      `\n      nothing left to do → figs resolve ${a.id}` +
+      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id} --note "job <id>"`
+    )
   }
   if (last.kind === "verdict" && last.verdict === "changes_requested") {
     return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title "…" …`
   }
-  return `act on the answer, then: figs report --resolves ${a.id}  (or figs resolve ${a.id} --chosen "…")`
+  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen "…"`
 }
 
 /** Restore an ask's refs into artifacts/ — hash-verified; never clobbers. */
@@ -1220,7 +1229,7 @@ async function fetchRefs(config, refs) {
  * `figs inbox` — session start. Bare: every ask with thread activity + the
  * next command for each. With an id: the zero-context handoff package (the
  * ask, the whole thread verbatim, refs restored to disk). Pure read — writes
- * nothing to the outbox; closing happens via resolve / report --resolves.
+ * nothing to the outbox; closing happens via resolve.
  */
 async function inboxCmd() {
   requireFigs()
@@ -1293,7 +1302,7 @@ async function inboxCmd() {
   }
 }
 
-// ---------- the resolution fold (shared by `resolve` and `report --resolves`) -
+// ---------- the resolution fold (`resolve` — the one closing verb) ----------
 /**
  * Build the closing fold line. Best-effort, the verified path: fetches this
  * agent's inbox and, when the ask has human events, cites the one acted on —
@@ -1406,16 +1415,6 @@ async function reportCmd() {
   const attached = attachFiles(flagAll("--attach"))
   if (attached.length === 1) run.artifact = attached[0]
   else if (attached.length > 1) run.artifacts = attached
-  const resolves = flag("--resolves")
-  let resolution = null
-  if (resolves) {
-    run.resolves = resolves
-    resolution = await buildResolution(resolves, {
-      chosen: flag("--chosen"),
-      by: flag("--by"),
-      note: flag("--note"),
-    })
-  }
   const session = captureSession()
   if (session) run.session = session
 
@@ -1423,11 +1422,6 @@ async function reportCmd() {
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("runs.jsonl", run)
   console.log(`figs: ✓ run recorded — ${summarize(run)}`)
-  if (resolution) {
-    for (const w of resolution.warnings) console.warn(`figs: ! ${w}`)
-    appendJsonl("asks.jsonl", resolution.line)
-    console.log(`figs: ✓ ask ${resolves} ${resolution.line.status}`)
-  }
   await autoPush()
 }
 

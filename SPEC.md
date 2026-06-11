@@ -82,7 +82,12 @@ Use **`steps`** *or* **`responsibilities`** depending on shape — a fixed pipel
 
 ## 5. `runs.jsonl` — activity
 
-One JSON object per line (JSON Lines). Each is something the agent did.
+One JSON object per line (JSON Lines). **One record = one job** — a unit of work the agent's
+*manager* would recognize ("recon — Acme — November"), under a **stable, meaningful id**
+(`recon-acme-2026-11`); the runs list reads as the job list. Records **fold by `id`** (same
+merge as asks): re-reporting a job's id layers progress onto its row (`status` evolves
+blocked-ish `warn` → `ok`) — sittings/sessions are agent plumbing and never mint records.
+Closing an ask is **not** a job: that's a `resolution` in `asks.jsonl` (§6), never a run.
 
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
@@ -93,7 +98,6 @@ One JSON object per line (JSON Lines). Each is something the agent did.
 | `result` | string | | One-line outcome. |
 | `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. **Outcome, never lifecycle** — a run is a complete fact when reported; nothing "closes" a run. |
 | `artifacts` | string[] | | File names under `artifacts/` to attach. Singular `artifact` (string) remains valid shorthand for one — readers normalize to the array (same pattern as `resolution`'s bare-string shorthand). |
-| `resolves` | string | | The ask `id` this run executes/closes (the agent did the answered/approved thing and is reporting back — see [§6.1](#61-lifecycle--two-ledgers-split-by-author)). |
 | `session` | `Session` | | Where/how this ran (see [§5.1](#51-session--runtime-metadata-optional)). Optional, self-reported. |
 
 ### 5.1 `Session` — runtime metadata (optional)
