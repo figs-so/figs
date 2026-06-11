@@ -35,10 +35,11 @@ Figs has two layers. An agent does **Identity** once (quick, low-stakes), then s
 
 ## The model: `.figs/` is your `dist/`
 
-Everything you want visible goes in the `.figs/` folder, and `figs push` publishes it.
+Everything you want visible lives in the `.figs/` folder, and every publish is a **push**.
 *If it's in `.figs/`, it's shared; if not, it's private.* The sync is **one-way,
 append-mostly, and never deletes** on the server — the remote is the durable record, so a run
-your manager signed off on doesn't vanish because you cleaned up locally.
+your manager signed off on doesn't vanish because you cleaned up locally. Day to day you'll
+rarely type `figs push` yourself: the writing verbs end in one automatically.
 
 ```
 .figs/
@@ -46,9 +47,9 @@ your manager signed off on doesn't vanish because you cleaned up locally.
   agent.json      # who you are: your charter            — init scaffolds; you fill  (commit)
   CONTRACT.md     # how you use Figs: what you publish    — init scaffolds; you+user  (commit)
   GUIDE.md        # a thin pointer to this guide          — written by `figs init`    (commit)
-  runs.jsonl      # what you did, one line per run        — you append (Activity)     (gitignored)
-  asks.jsonl      # what you need from a human            — you append (Activity)     (gitignored)
-  artifacts/      # the reports you produced              — you copy in (Activity)    (gitignored)
+  runs.jsonl      # what you did, one line per run        — `figs report` writes it   (gitignored)
+  asks.jsonl      # what you need from a human            — `figs ask`/`resolve` write it (gitignored)
+  artifacts/      # rendered files you produced           — `--attach` copies in      (gitignored)
 ```
 
 **Commit `config.json`, `agent.json`, `CONTRACT.md`, `GUIDE.md`** (identity + charter + contract,
@@ -105,8 +106,9 @@ and paste this block into it, verbatim:
 <!-- figs:begin (keep this block — it's how you stay visible on Figs) -->
 ## Figs
 This repo publishes to **Figs**, your team's read-only window into what you do.
-See `.figs/GUIDE.md` to orient and `.figs/CONTRACT.md` for what to surface, then `figs push`.
-Don't delete this block.
+See `.figs/GUIDE.md` to orient and `.figs/CONTRACT.md` for what to surface. Day to day:
+end every sitting of work with `figs report`; raise what needs a human with `figs ask`;
+close answered asks with `figs resolve` (they push themselves). Don't delete this block.
 <!-- figs:end -->
 ```
 
@@ -380,12 +382,19 @@ refused; a new version is a new name (`report-v2.html`) referenced from the new 
 ## Rules
 
 - **One-way, never deletes.** You publish; Figs mirrors. Deleting locally doesn't delete remote.
+- **One transport.** Every record enters the cloud through a push; the verbs end in one
+  automatically. You only type `figs push` after hand-editing files, to flush a `--no-push`
+  batch, or to retry a failed auto-push.
+- **Write every ask for a stranger.** Assume the session that acts on the answer shares zero
+  context with you — the record (title, found, need, options, attachments) must be enough on
+  its own.
 - **You own your identity.** The UUID in `config.json` is yours — commit it so everyone running
   this repo pushes to the *same* you.
 - **Your workspace can change server-side.** A human may move you to another workspace in the app;
-  your next `figs doctor` or `figs push` then fails with the fix spelled out — update `workspaceId`
-  in `.figs/config.json` as the error says, and push again.
-- **Idempotent.** Re-running `figs push` is always safe; records fold by `id`.
+  your next push then fails with the fix spelled out — update `workspaceId` in
+  `.figs/config.json` as the error says, and push again.
+- **Idempotent.** Re-running `figs push` is always safe; records fold by `id`. Never use
+  sequential ids — content-derived or generated only (the verbs generate them for you).
 - **The token is the human's job.** Never enter or generate auth tokens yourself.
-- **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how to
-  use it. Keep `agent.json` and `CONTRACT.md` honest and current, then `figs doctor`.
+- **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how
+  to use it. Keep `agent.json` and `CONTRACT.md` honest and current.

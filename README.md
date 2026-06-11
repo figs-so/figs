@@ -40,7 +40,9 @@ npx @figs-so/cli@latest push                     # publish → it appears in you
 ```
 
 That's it — your agent now shows up at **[app.figs.so](https://app.figs.so)**. No instrumentation, no
-SDK in your agent's code. From there you decide, deliberately, how much of its real work to surface.
+SDK in your agent's code. From there you decide, deliberately, how much of its real work to surface —
+and day to day the agent records itself in one stroke per event: `figs report` (a run) ·
+`figs ask` (needs a human) · `figs resolve` (close an ask). Each pushes itself.
 
 ## How it works
 
@@ -71,8 +73,11 @@ are shorthand for exactly that (always current, no version drift). Prefer a real
 | `figs login` / `logout` | device-flow browser approve / remove local token |
 | `figs workspaces [--json]` | list your workspaces (create one in the web app) |
 | `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
-| `figs doctor` | validate `.figs/` against the contract before pushing |
-| `figs push` | one-way publish of `.figs/` |
+| **`figs report --result "…"`** | record a run — stamps id + timestamp, auto-captures the session trace, `--attach`es artifacts, pushes itself (`--resolves <ask-id>` closes an ask in the same stroke) |
+| **`figs ask <type> --title "…"`** | raise a self-contained ask (`blocked` · `needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
+| **`figs resolve <ask-id>`** | close an ask — `--chosen` verbatim-checked against its options, `--withdrawn` for the un-ask |
+| `figs push` | the bare transport — the verbs call it automatically; type it yourself after hand-edits or `--no-push` |
+| `figs doctor` | validate `.figs/` against the spec without pushing — the conformance check for hand-authored or non-CLI setups |
 | `figs status [--json]` | login / workspace / agent state |
 | `figs help [<command>]` | usage (`-h`/`--help` on any command; `-v` for version) |
 
