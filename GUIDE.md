@@ -53,9 +53,18 @@ your manager signed off on doesn't vanish because you cleaned up locally.
 
 **Commit `config.json`, `agent.json`, `CONTRACT.md`, `GUIDE.md`** (identity + charter + contract,
 all non-secret). The activity files are a transient outbox — `figs init` gitignores them; the
-server aggregates them. After you edit anything, run **`figs doctor`** — it validates `.figs/`
-against the live contract, and when a field is the wrong shape it quotes back the shape it expected.
-The field reference and a full valid example are below.
+server aggregates them.
+
+**Two ways to write the outbox — both first-class:**
+- **The verbs (the easy path): `figs report` · `figs ask` · `figs resolve`.** You supply the
+  content; the CLI does the bookkeeping you'd otherwise get wrong — stamps the id and the real
+  clock time, captures the session trace from your runtime's own records, validates the shape
+  with errors that teach, copies attachments into `artifacts/`, and **pushes automatically**
+  (`--no-push` to batch). Each verb writes one line into the same files described below.
+- **Hand-writing the JSONL** stays fully supported forever — the files are the protocol; the
+  verbs are sugar over them. If you hand-edit, run **`figs doctor`** after — it validates
+  `.figs/` against the spec and quotes back the expected shape when a field is wrong (`figs push`
+  also runs the same local checks before sending).
 
 ---
 
@@ -225,29 +234,52 @@ should see (PII, HR, financial details), **push only the shareable summary and k
 their call what's safe to show.
 
 **4. Then instrument + wire the loop.** Once you agree what to surface: add whatever recording
-supports it (this is the part that may change how you work), and wire `figs push` into your run loop
-(a line in your own operating doc), so every run keeps Figs current. A push with nothing new to say
-is pointless — the loop only matters once there's something real to record.
+supports it (this is the part that may change how you work), and wire the loop into your own
+operating doc — **end every sitting of real work with `figs report …`** (it pushes itself; bare
+`figs push` is only for after hand-edits or `--no-push` batching). A report with nothing new to
+say is pointless — the loop only matters once there's something real to record.
 
 Capture all four in `.figs/CONTRACT.md`: **fit verdict · what you publish · what you hold back ·
 how you're instrumented + where push is wired.** Keep it honest and current.
 
-## `runs.jsonl` — what you did (append one line per run)
+## `runs.jsonl` — what you did (report one run per sitting of work)
+
+**The easy path** — one command, after the work:
+
+```
+figs report --result "88% matched · 31 keys flagged" --unit acme --period 2025-11 \
+  --attach ./acme-2025-11.html
+```
+
+The CLI writes the line below for you — id and `ts` stamped, the `session` trace captured
+automatically from your runtime's own records (Claude Code and Codex transcripts; plus your repo's
+commit), the attachment copied into `artifacts/` and linked, then pushed. `--attach` repeats for
+multiple files; `--id` only when you *want* a stable id (re-running the same job for the same
+period then updates the same run); `--resolves <ask-id>` when this run did the thing an answered
+ask was waiting on — it closes the ask in the same stroke.
+
+The line it writes (hand-author this shape if you're not using the verb):
 
 ```json
 { "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "artifact": "acme-2025-11.html" }
 ```
 
-- `id` ✅ and `ts` ✅ (ISO-8601 with offset) are required. `status`: `ok | warn | fail` (default `ok`).
-- `unit` links to a unit `id`. `result` is the one-line outcome. `artifact` is a file in `artifacts/`.
-- **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. Use a stable id.
+- `id` ✅ and `ts` ✅ (ISO-8601 with offset) are required. `status`: `ok | warn | fail` (default
+  `ok`) — that's the **outcome**, never a lifecycle: a run is a complete fact when reported;
+  nothing "closes" a run. One sitting of work = one run — when you stop (including stopping to
+  wait for a human), report what's true so far.
+- `unit` links to a unit `id`. `result` is the one-line outcome. `artifact` is a file in
+  `artifacts/` (`artifacts` — an array — for several).
+- **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. **Never use
+  a counter** for ids (two machines would silently fold over each other's runs) — content-derived
+  (`acme-2025-11`) or generated, nothing sequential.
 
 ### `session` — where this ran (optional, recommended)
 
-Add a `session` object to a run (or an ask) so humans can trace it: which runtime and model did
-this, in which session, from which version of your repo, at what token cost. **Copy the values from
-your runtime's own records — never guess.** Every field is optional; fill what you can find, omit
-the rest.
+A `session` object on a run (or an ask) lets humans trace it: runtime, model, session id, repo
+commit, token cost. **`figs report` and `figs ask` capture it automatically** from your runtime's
+own records — you never type it. Hand-authors: copy what your runtime's session records expose
+(never guess), shaped like:
 
 ```json
 "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "<uuid>",
@@ -255,28 +287,34 @@ the rest.
   "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } }
 ```
 
-- `startedAt` — note the time when you begin the job (`ts` is when you report it).
-- `commit` — `git rev-parse --short HEAD`; append `+dirty` if `git status --porcelain` prints anything.
-- `tokens` are **session totals at the time you report** — cumulative, not per-job. That's expected:
-  it's approximate transparency, not metering. Include the cache figures — they usually dominate cost.
+`tokens` are **session totals at report time** — cumulative, not per-job; approximate
+transparency, not metering. `commit` gets `+dirty` when the tree has uncommitted changes.
 
-**Recipe — Claude Code:** your transcript lives at `~/.claude/projects/<cwd-with-slashes-as-dashes>/<sessionId>.jsonl`
-(newest `.jsonl` there is the current session; its filename is your `sessionId`). Each assistant entry
-carries `message.model` and `message.usage` — sum `input_tokens`, `output_tokens`,
-`cache_read_input_tokens` (→ `cacheRead`), `cache_creation_input_tokens` (→ `cacheWrite`); ignore
-entries whose model is `<synthetic>`.
+## `asks.jsonl` — what you need from a human
 
-**Recipe — Codex:** the newest `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` is the current
-session (the uuid in the filename is your `sessionId`). Take `model` from the session meta, and the
-last `token_count` event's `total_token_usage`: `input_tokens` → `input`, `cached_input_tokens` →
-`cacheRead`, `output_tokens` → `output`.
+Raise your hand when you're stuck. **Write every ask for a stranger** — assume the session that
+acts on the answer shares zero context with you (a future you, another machine, the human): the
+record must carry everything needed to act, on its own.
 
-Other runtimes: same idea — find your runtime's session record, copy what it exposes, omit the rest.
+**The easy path:**
 
-## `asks.jsonl` — what you need from a human (append)
+```
+figs ask needs-decision --title "No bridge rule for prefixed invoice numbers" \
+  --found "~180 rows can't be matched safely; guessing risks false matches." \
+  --need "Confirm the bridge rule for prefixed invoice numbers." \
+  --option "Strip the alpha prefix" --option "Use a mapping you provide" \
+  --detail "Amount at risk=$50.0M" --attach ./acme-2025-11.html \
+  --to manager --run last
+```
 
-Raise your hand when you're stuck. Assemble the full context so the human can act without
-re-gathering anything.
+Same scribe contract as `report`: id/ts/session stamped, attachments copied + linked as `refs`,
+validated, pushed. `--run last` links the run this came out of; for long texts use `--stdin` with
+a JSON object. **For a `sign-off`, attach the exact content to approve** (the email bodies, the
+recipient list) **plus a brief** — what to do once approved and what it requires (creds, files,
+data freshness) — so the session that picks up the approval can verify and act from the record
+alone.
+
+The line it writes (the hand-authored shape):
 
 ```json
 {
@@ -303,8 +341,17 @@ re-gathering anything.
   Write `options[]` as **short, stable, quotable** strings — a future answer (and your own
   `resolution.chosen`) references one *verbatim*. An ask can also carry the same `session` block as
   a run — useful, since asks mark the moments a human will want to trace.
-- **You own the lifecycle — close it honestly.** Append a closing line on a later run (folded by
-  `id`; never edit old lines):
+- **You own the lifecycle — close it honestly.** The easy path:
+
+  ```
+  figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"
+  ```
+
+  `--chosen` is checked **verbatim** against the ask's `options[]` (a paraphrase gets a
+  "did you mean…"). Use `--withdrawn` when the ask is simply no longer needed — don't mark it
+  resolved if nobody acted. When a *run* did the work, prefer `figs report --resolves <ask-id>`
+  — one stroke records the run and closes the ask. Hand-authored, the close is an appended fold
+  line (by `id`; never edit old lines):
 
   ```json
   { "id": "acme-bridge", "status": "resolved",
@@ -315,16 +362,18 @@ re-gathering anything.
   `resolution` says how it closed: `chosen` = the option taken (verbatim); `via` = `"human"`
   (someone told you out-of-band) · `"self"` (the blocker cleared on its own) · `"figs"` (reserved
   for answers pulled through Figs); `by` = who, as best you know. A bare string works as a
-  shorthand note. Use `"status": "withdrawn"` when the ask is simply no longer needed — don't mark
-  it resolved if nobody acted. Strictly one-way today — the human acts in their own workflow.
+  shorthand note. Strictly one-way today — the human acts in their own workflow.
 
-## `artifacts/` — your reports
+## `artifacts/` — the rendered files you produce
 
-Drop the report a run produced here and point to it from the run's `artifact` (filename only).
+You author artifacts wherever you work; `--attach` on `report`/`ask` copies them in and links
+them (or drop a file here yourself and point to it from a run's `artifact` / an ask's `refs`).
 Supported: **`.html` `.md` `.txt` `.json`** and images (`.png .jpg .gif .webp .svg`), **≤ 3 MB**
-(compress larger images). HTML/markdown render in a sandboxed viewer; the file is shown
-exactly as you produced it. *(Remember the visibility note above — an artifact is visible to every
-workspace member.)*
+(compress larger images). HTML/markdown render in a sandboxed viewer; the file is shown exactly
+as you produced it. **Artifacts are immutable once published** — same name + different content is
+refused; a new version is a new name (`report-v2.html`) referenced from the new run/ask. Treat
+`artifacts/` as a copy-in outbox, never a working directory. *(Remember the visibility note above
+— an artifact is visible to every workspace member.)*
 
 ---
 

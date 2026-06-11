@@ -54,7 +54,6 @@ the CLI attaches it on push. Everything else is optional and rendered when prese
 | `id` | UUID | ✓ | Identity. **Supplied from `config.json#agentId` by the CLI on push — not written in this file.** |
 | `name` | string | ✓ | Display name. |
 | `key` | string | | Display slug; derived from `name` if absent. |
-| `type` | `"agent"` \| `"human"` | | Default `"agent"`. (`"human"` still validates but is **deprecated** — humans in Figs are workspace members, surfaced through per-agent roles, not pushable cards.) |
 | `avatar` | `{ seed: string }` | | Seed for the generated avatar. |
 | `role` | string | | Short title, e.g. "Reconciliation Officer". |
 | `status` | string | | Free-text lifecycle, e.g. `in_dev`, `active`. |
@@ -92,16 +91,18 @@ One JSON object per line (JSON Lines). Each is something the agent did.
 | `unit` | string | | The `Unit.id` this run is about. |
 | `period` | string | | |
 | `result` | string | | One-line outcome. |
-| `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. |
-| `artifact` | string | | File name under `artifacts/` to attach. |
+| `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. **Outcome, never lifecycle** — a run is a complete fact when reported; nothing "closes" a run. |
+| `artifacts` | string[] | | File names under `artifacts/` to attach. Singular `artifact` (string) remains valid shorthand for one — readers normalize to the array (same pattern as `resolution`'s bare-string shorthand). |
+| `resolves` | string | | The ask `id` this run executes/closes (the agent did the answered/approved thing and is reporting back — see [§6.1](#61-lifecycle--two-ledgers-split-by-author)). |
 | `session` | `Session` | | Where/how this ran (see [§5.1](#51-session--runtime-metadata-optional)). Optional, self-reported. |
 
 ### 5.1 `Session` — runtime metadata (optional)
 
 An optional, **self-reported** block describing the runtime session that produced a run (or raised an
 ask — see §6). Every field is optional — fill what your runtime exposes, omit the rest. This is
-*transparency, not attestation*: the agent copies these values from its runtime's own records (see the
-agent guide for per-runtime recipes); cryptographic provenance remains [reserved](#reserved-not-in-v1).
+*transparency, not attestation*: the values come from the runtime's own records — `figs report`
+captures them automatically; hand-authors copy what their runtime exposes. Cryptographic provenance
+remains [reserved](#reserved-not-in-v1).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -120,11 +121,12 @@ primitive** — the agent reached the edge of its autonomy.
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
-| `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). (`confirm-assumption` still validates but is **deprecated** — use `needs-decision` or `fyi`.) |
+| `type` | enum | ✓ | `blocked` \| `needs-decision` \| `sign-off` \| `fyi`. `fyi` is a non-blocking heads-up (no decision needed). |
 | `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the agent un-asked — no longer needed, nobody acted). |
 | `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder` — e.g. self-edit/logic-change flags). Absent = unaddressed; readers may guess from `type` but must present it as a guess. |
 | `title` | string | ✓ | The ask, in one line. |
 | `unit` | string | | The `Unit.id` this concerns. |
+| `run` | string | | The run `id` this ask was raised during (the work that surfaced it). **Optional** — asks also arise outside runs (a self-found issue, expired credentials). |
 | `found` | string | | What the agent found / why it's stuck. |
 | `need` | string | | What it needs from the human. |
 | `options` | string[] | | Candidate resolutions — **short, stable, quotable** strings: a future answer references one *verbatim* (see [§6.2](#62-resolution--how-an-ask-closed)). |
@@ -213,7 +215,7 @@ account named for what it is, e.g. "Runner — analytics box"). Agents never aut
 
 ## 9. Validation & versioning
 
-- A `.figs/` folder can be validated against this contract before publishing (`figs doctor` →
+- A `.figs/` folder can be validated against this spec before publishing (`figs doctor` →
   `POST {endpoint}/api/validate`). The shapes are the source of truth; readers reject malformed payloads.
 - **`figs-spec` is integer-versioned.** v1 is the current version. **Additive/optional** fields keep the
   version number (an older `agent.json` still validates). The number is bumped only on a **breaking**
@@ -228,8 +230,8 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 - **Two-way / answer-down — thread events.** A human answer or sign-off flowing *back* to the agent
   through Figs (vs. the agent resolving in its own workflow). v1 is report-only. The shapes are locked
   so `options[]`/`resolution` are designed for them: server-side events keyed to the ask id —
-  `claim { by, ts }` (any workspace member: "I'm on it") · `answer { by, ts, chosen?, text? }` where
-  `chosen` verbatim-matches an `options[]` entry · `verdict { by, ts, verdict: "approved" | "rejected", text? }`
+  `answer { by, ts, chosen?, text? }` where
+  `chosen` verbatim-matches an `options[]` entry · `verdict { by, ts, verdict: "approved" | "changes-requested" | "rejected", text? }`
   for sign-offs. Answers/verdicts are permission-gated to the agent's manager/builder (the injection
   gate); delivery is **agent-pulled** (an inbox read), never pushed into the repo. Item kinds `note`
   and `directive` (human-initiated) are named-reserved.
@@ -248,7 +250,6 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 // .figs/agent.json   (no `id` here — `figs init` puts it in config.json; the CLI attaches it on push)
 {
   "name": "Reconciliation",
-  "type": "agent",
   "role": "Reconciliation Officer",
   "status": "in_dev",
   "avatar": { "seed": "Reconciliation" },
@@ -283,7 +284,7 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 
 ```jsonc
 // .figs/asks.jsonl   (one object per line; records fold by id — the close is an append)
-{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "needs-decision", "status": "open", "to": "manager", "unit": "acme",
+{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "needs-decision", "status": "open", "to": "manager", "unit": "acme", "run": "acme-2025-11",
   "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",

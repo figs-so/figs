@@ -9,10 +9,20 @@
  *   figs workspaces                     list the user's workspaces               [--json]
  *   figs init --workspace <slug-or-id> [--endpoint <url>]
  *                                         create .figs/config.json + GUIDE.md (generates a stable agent id)
- *   figs doctor                         validate .figs/ against the contract before pushing
+ *   figs report --result "…"            record a run (stamps id/ts/session, --attach files, auto-push)
+ *   figs ask <type> --title "…"         raise an ask (self-contained: options/details/attachments, auto-push)
+ *   figs resolve <ask-id>               close an ask (verbatim-checks --chosen, auto-push)
+ *   figs doctor                         validate .figs/ against the spec before pushing
  *   figs push                           one-way push the .figs/ spine to the ingest endpoint
  *   figs version                        print the CLI version (and check for updates)
  *   figs help [<command>]               usage; `-h`/`--help` on any command, `-v` for version
+ *
+ * The writing verbs (report/ask/resolve) are sugar over the same files — they
+ * stamp ids + real-clock timestamps, validate on write with teaching errors,
+ * copy attachments into artifacts/, then invoke the same push as `figs push`
+ * (auto-push IS push — one transport, many entry points; --no-push to batch).
+ * Hand-writing the JSONL + bare `push` remains fully supported — files are the
+ * protocol; the verbs are conveniences.
  *
  * Designed to be driven by an agent: non-interactive, clear output, `--json`
  * on read commands, `-h`/`--help`/`help` everywhere, and errors that say what to
@@ -27,17 +37,20 @@
  */
 
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, extname, join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { spawn } from "node:child_process"
+import { execSync, spawn } from "node:child_process"
 
 // Single source of truth for the version: package.json (shipped alongside this
 // file in the published package). One edit keeps `figs version`, the floor
@@ -96,12 +109,69 @@ const COMMANDS = {
     ],
     eg: "figs init --workspace acme-corp",
   },
-  doctor: { args: "", flags: ["--json"], desc: "validate .figs/ against the live contract before pushing" },
+  report: {
+    args: "--result <text> [options]",
+    flags: [
+      "--result", "--id", "--unit", "--period", "--status", "--attach",
+      "--resolves", "--chosen", "--by", "--note", "--no-push",
+    ],
+    desc: "record a run — writes one line to runs.jsonl, stamps id/ts/session, pushes",
+    more: [
+      "You supply the content; the CLI does the bookkeeping (id, real-clock ts, session",
+      "trace from your runtime's own records, validation, artifact copy, push).",
+      "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
+      "--resolves <ask-id> also closes that ask (with optional --chosen/--by/--note).",
+      "--id only for deliberate stable ids (re-running the same job updates the same run).",
+      "--no-push writes locally only; `figs push` publishes later.",
+      "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
+    ],
+    eg: 'figs report --result "88% matched · 31 flagged" --attach ./acme-2025-11.html',
+  },
+  ask: {
+    args: "<type> --title <text> [options]",
+    flags: [
+      "--id", "--title", "--need", "--found", "--option", "--detail", "--attach",
+      "--to", "--unit", "--run", "--stdin", "--no-push",
+    ],
+    desc: "raise an ask — one self-contained line in asks.jsonl, pushed so a human sees it",
+    more: [
+      "<type> is one of: blocked · needs-decision · sign-off · fyi.",
+      "Make it self-contained — a future session with zero context (or another human)",
+      "must be able to act from this record alone: --found (what you saw), --need (what",
+      "you need), --option (repeatable; short, stable, quotable — answers cite one",
+      "verbatim), --detail \"Label=Value\" (repeatable), --attach <file> (repeatable;",
+      "for sign-offs attach the exact content for review + a brief: what to do once",
+      "approved and what it requires).",
+      "--run <id|last> links the run this came out of (last = newest local run).",
+      "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
+    ],
+    eg: 'figs ask sign-off --title "Send 10 payment reminders" --attach ./previews.html --run last',
+  },
+  resolve: {
+    args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn]",
+    flags: ["--chosen", "--by", "--note", "--withdrawn", "--no-push"],
+    desc: "close an ask — appends the resolution fold line and pushes",
+    more: [
+      "--chosen must quote one of the ask's options[] verbatim (checked).",
+      "--withdrawn = the ask is no longer needed, nobody acted (don't mark resolved).",
+      "Use `figs report --resolves <ask-id>` instead when a run did the work.",
+    ],
+    eg: 'figs resolve acme-bridge --chosen "Strip the alpha prefix" --by "Sarah (accounting)"',
+  },
+  doctor: {
+    args: "",
+    flags: ["--json"],
+    desc: "validate .figs/ against the spec without pushing — the conformance check for hand-authored or non-CLI setups",
+  },
   push: {
     args: "",
     flags: [],
     desc: "publish .figs/ — spine to /api/ingest, artifacts to /api/artifacts",
-    more: ["Idempotent (records fold by id). Exits non-zero if an artifact upload is rejected."],
+    more: [
+      "Idempotent (records fold by id). Exits non-zero if an artifact upload is rejected.",
+      "The writing verbs (report/ask/resolve) call this automatically — you only need it",
+      "after hand-editing files, after --no-push, or to retry a failed auto-push.",
+    ],
     eg: "figs push",
   },
   version: { args: "", flags: [], desc: "print the CLI version and check for updates" },
@@ -136,6 +206,119 @@ function flag(name) {
     if (args[i].startsWith(`${name}=`)) return args[i].slice(name.length + 1)
   }
   return undefined
+}
+/** All values of a repeatable flag, in order. */
+function flagAll(name) {
+  const args = process.argv.slice(2)
+  const out = []
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === name && args[i + 1] !== undefined) out.push(args[i + 1])
+    else if (args[i].startsWith(`${name}=`)) out.push(args[i].slice(name.length + 1))
+  }
+  return out
+}
+/** Boolean flag — present or not (takes no value). */
+function hasFlag(name) {
+  return process.argv.slice(2).includes(name)
+}
+/** First non-flag token after the command (e.g. the ask type, the ask id). */
+function positional() {
+  const args = process.argv.slice(3)
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("-")) {
+      // skip `--name value` pairs (but not `--name=value` or booleans)
+      if (!args[i].includes("=") && !BOOLEAN_FLAGS.has(args[i])) i++
+      continue
+    }
+    return args[i]
+  }
+  return undefined
+}
+const BOOLEAN_FLAGS = new Set(["--no-push", "--stdin", "--withdrawn", "--json", "-h", "--help"])
+
+/** ISO-8601 with the machine's real UTC offset (never the agent's guess). */
+function nowIso() {
+  const d = new Date()
+  const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, "0")
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? "+" : "-"
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    (off === 0 ? "Z" : `${sign}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`)
+  )
+}
+/** Generated unique id — stable/content-derived ids only via explicit --id. */
+function genId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+}
+
+// ---------- local validation (the spec's common mistakes, caught on write) ----
+// The server's schema stays the source of truth; these catch what hand-authors
+// and flag typos get wrong, with errors that teach the fix.
+const ASK_TYPES = ["blocked", "needs-decision", "sign-off", "fyi"]
+const RUN_STATUSES = ["ok", "warn", "fail"]
+const ASK_STATUSES = ["open", "resolved", "withdrawn"]
+const TO_VALUES = ["manager", "builder"]
+const ARTIFACT_EXTS = new Set([
+  ".html", ".md", ".txt", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+])
+const ARTIFACT_MAX = 3 * 1024 * 1024
+
+/** "signoff" → `did you mean "sign-off"?` — normalized nearest match. */
+function didYouMean(value, allowed) {
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "")
+  const hit = allowed.find((a) => norm(a) === norm(value))
+  return hit ? ` — did you mean "${hit}"?` : ` (valid: ${allowed.join(" · ")})`
+}
+function checkEnum(issues, obj, field, allowed, label) {
+  const v = obj[field]
+  if (v !== undefined && !allowed.includes(v)) {
+    issues.push(`${label}.${field}: "${v}" isn't valid${didYouMean(v, allowed)}`)
+  }
+}
+/** Validate one folded run record → array of issue strings. */
+function validateRun(r) {
+  const issues = []
+  const label = `run "${r.id ?? "?"}"`
+  if (!r.id || typeof r.id !== "string") issues.push(`${label}: missing required "id"`)
+  if (!r.ts) issues.push(`${label}: missing required "ts" (ISO-8601 — \`figs report\` stamps it for you)`)
+  checkEnum(issues, r, "status", RUN_STATUSES, label)
+  if (r.artifact !== undefined && typeof r.artifact !== "string") {
+    issues.push(`${label}.artifact: must be a single file name (use "artifacts" for a list)`)
+  }
+  if (r.artifacts !== undefined && (!Array.isArray(r.artifacts) || r.artifacts.some((a) => typeof a !== "string"))) {
+    issues.push(`${label}.artifacts: must be an array of file names`)
+  }
+  return issues
+}
+/** Validate one folded ask record → array of issue strings. */
+function validateAsk(a) {
+  const issues = []
+  const label = `ask "${a.id ?? "?"}"`
+  if (!a.id || typeof a.id !== "string") issues.push(`${label}: missing required "id"`)
+  if (!a.type) {
+    issues.push(
+      `${label}: missing required "type" — was it raised on another machine? (closing it from here needs the full record; cross-machine fetch is coming)`,
+    )
+  } else checkEnum(issues, a, "type", ASK_TYPES, label)
+  if (!a.title) issues.push(`${label}: missing required "title"`)
+  checkEnum(issues, a, "status", ASK_STATUSES, label)
+  checkEnum(issues, a, "to", TO_VALUES, label)
+  if (a.options !== undefined && (!Array.isArray(a.options) || a.options.some((o) => typeof o !== "string"))) {
+    issues.push(`${label}.options: must be an array of short, quotable strings`)
+  }
+  if (a.details !== undefined && (!Array.isArray(a.details) || a.details.some((d) => !d || typeof d.l !== "string"))) {
+    issues.push(`${label}.details: must be [{ "l": "Label", "v": "Value" }]`)
+  }
+  if (a.refs !== undefined && (!Array.isArray(a.refs) || a.refs.some((r) => !r || typeof r.label !== "string"))) {
+    issues.push(`${label}.refs: must be [{ "label": "…", "artifact": "<file in artifacts/>" }]`)
+  }
+  return issues
+}
+/** Validate the whole local outbox (folded) — returns all issues. */
+function validateOutbox(runs, asks) {
+  return [...runs.flatMap(validateRun), ...asks.flatMap(validateAsk)]
 }
 function getToken() {
   return process.env.FIGS_TOKEN || readJson(globalCreds, {}).token
@@ -287,6 +470,9 @@ else if (COMMANDS[cmd]) {
   else if (cmd === "status") await status()
   else if (cmd === "workspaces") await workspaces()
   else if (cmd === "init") await init()
+  else if (cmd === "report") await reportCmd()
+  else if (cmd === "ask") await askCmd()
+  else if (cmd === "resolve") await resolveCmd()
   else if (cmd === "doctor") await doctor()
   else if (cmd === "push") await push()
 } else {
@@ -732,7 +918,370 @@ async function init() {
   console.log(`        Full guide: ${endpoint}/llms.txt`)
 }
 
-/** Validate the local .figs/ payload against the contract — no write. */
+// ====================== the writing verbs ===================================
+// report / ask / resolve — sugar over the same files (hand-writing stays
+// first-class). The agent supplies content; the CLI stamps id + real-clock ts,
+// captures the session trace, validates with teaching errors, copies
+// attachments, then invokes the same push as `figs push`.
+
+function requireFigs() {
+  if (!existsSync(repoDir)) die("no .figs/ here — run `figs init` first")
+  const config = readJson(join(repoDir, "config.json"), {})
+  if (!config.workspaceId || !config.agentId) {
+    die("config missing workspaceId/agentId — run `figs init`")
+  }
+}
+function appendJsonl(name, obj) {
+  appendFileSync(join(repoDir, name), JSON.stringify(obj) + "\n")
+}
+/** Print a record without its (noisy) session block. */
+function summarize(obj) {
+  const { session, ...rest } = obj
+  return JSON.stringify(rest) + (session ? "  (+ session trace)" : "")
+}
+
+/** Copy attachments into artifacts/ — ext + size checks; immutable once there. */
+function attachFiles(paths) {
+  const names = []
+  for (const p of paths) {
+    if (!existsSync(p)) die(`--attach: no such file: ${p}`)
+    const ext = extname(p).toLowerCase()
+    if (!ARTIFACT_EXTS.has(ext)) {
+      die(`--attach: unsupported type "${ext || p}" — supported: ${[...ARTIFACT_EXTS].join(" ")}`)
+    }
+    const bytes = readFileSync(p)
+    if (bytes.length > ARTIFACT_MAX) {
+      die(`--attach: ${basename(p)} is ${(bytes.length / 1048576).toFixed(1)} MB — over the 3 MB cap; compress or split it`)
+    }
+    const name = basename(p)
+    const dest = join(repoDir, "artifacts", name)
+    if (existsSync(dest) && !readFileSync(dest).equals(bytes)) {
+      die(
+        `--attach: artifacts/${name} already exists with different content — artifacts are immutable once published; use a new name (e.g. ${name.slice(0, -ext.length)}-v2${ext}) and reference that`,
+      )
+    }
+    mkdirSync(join(repoDir, "artifacts"), { recursive: true })
+    writeFileSync(dest, bytes)
+    names.push(name)
+  }
+  return names
+}
+
+// ---------- session auto-capture --------------------------------------------
+// The trace comes from the runtime's own records, never from the model's
+// memory. Best-effort by design: any failure → the optional block is omitted;
+// a report is never blocked on trace capture.
+function captureSession() {
+  try {
+    const candidates = [findClaudeTranscript(), findCodexTranscript()].filter(Boolean)
+    if (!candidates.length) return undefined
+    // The transcript being written *now* is the newest one, whichever runtime
+    // owns it. Anything older than a day is a leftover, not this session.
+    const best = candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
+    if (Date.now() - best.mtimeMs > 86400000) return undefined
+    const session = best.parse(best.path)
+    if (!session) return undefined
+    const commit = captureCommit()
+    if (commit) session.commit = commit
+    return session
+  } catch {
+    return undefined
+  }
+}
+function newestFile(dir, filter) {
+  if (!existsSync(dir)) return null
+  let best = null
+  for (const f of readdirSync(dir)) {
+    if (!filter(f)) continue
+    const p = join(dir, f)
+    let st
+    try {
+      st = statSync(p)
+    } catch {
+      continue
+    }
+    if (!st.isFile()) continue
+    if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, name: f, mtimeMs: st.mtimeMs }
+  }
+  return best
+}
+function findClaudeTranscript() {
+  const dir = join(homedir(), ".claude", "projects", process.cwd().replace(/[\\/:]/g, "-"))
+  const f = newestFile(dir, (n) => n.endsWith(".jsonl"))
+  return f ? { ...f, parse: parseClaudeTranscript } : null
+}
+function parseClaudeTranscript(path) {
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  let model, startedAt
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    let e
+    try {
+      e = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!startedAt && typeof e.timestamp === "string") startedAt = e.timestamp
+    const m = e.message
+    if (!m?.usage || m.model === "<synthetic>") continue
+    if (typeof m.model === "string") model = m.model
+    tokens.input += m.usage.input_tokens ?? 0
+    tokens.output += m.usage.output_tokens ?? 0
+    tokens.cacheRead += m.usage.cache_read_input_tokens ?? 0
+    tokens.cacheWrite += m.usage.cache_creation_input_tokens ?? 0
+  }
+  const out = { runtime: "claude-code", sessionId: basename(path, ".jsonl") }
+  if (model) out.model = model
+  if (startedAt) out.startedAt = startedAt
+  if (tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite > 0) out.tokens = tokens
+  return out
+}
+function findCodexTranscript() {
+  const root = join(homedir(), ".codex", "sessions")
+  if (!existsSync(root)) return null
+  const desc = (dir) => {
+    try {
+      return readdirSync(dir).sort().reverse()
+    } catch {
+      return []
+    }
+  }
+  for (const y of desc(root)) {
+    for (const m of desc(join(root, y))) {
+      for (const d of desc(join(root, y, m))) {
+        const f = newestFile(join(root, y, m, d), (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
+        if (f) return { ...f, parse: parseCodexTranscript }
+      }
+    }
+  }
+  return null
+}
+function parseCodexTranscript(path) {
+  let model, usage, startedAt
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    let e
+    try {
+      e = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!startedAt && typeof e.timestamp === "string") startedAt = e.timestamp
+    const p = e.payload ?? e
+    if (!model && typeof p?.model === "string") model = p.model
+    const u = p?.info?.total_token_usage ?? p?.total_token_usage
+    if (u) usage = u
+  }
+  const out = { runtime: "codex" }
+  const uuid = basename(path).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+  if (uuid) out.sessionId = uuid[0]
+  if (model) out.model = model
+  if (startedAt) out.startedAt = startedAt
+  if (usage) {
+    out.tokens = {
+      input: usage.input_tokens ?? 0,
+      output: usage.output_tokens ?? 0,
+      cacheRead: usage.cached_input_tokens ?? 0,
+    }
+  }
+  return out
+}
+function captureCommit() {
+  try {
+    const opts = { stdio: ["ignore", "pipe", "ignore"] }
+    const sha = execSync("git rev-parse --short HEAD", opts).toString().trim()
+    if (!sha) return undefined
+    const dirty = execSync("git status --porcelain", opts).toString().trim()
+    return dirty ? `${sha}+dirty` : sha
+  } catch {
+    return undefined
+  }
+}
+
+// ---------- the resolution fold (shared by `resolve` and `report --resolves`) -
+function buildResolution(askId, { chosen, by, note, withdrawn }) {
+  if (withdrawn && chosen) {
+    die("--withdrawn and --chosen are mutually exclusive (withdrawn = the ask is no longer needed, nobody acted)")
+  }
+  const asks = foldById(readJsonl("asks.jsonl"))
+  const ask = asks.find((a) => a.id === askId)
+  const warnings = []
+  if (!ask) {
+    warnings.push(
+      `ask "${askId}" isn't in the local asks.jsonl (raised on another machine, or pruned) — recording the close anyway; the server folds it onto the full record`,
+    )
+  } else if (chosen && ask.options?.length && !ask.options.includes(chosen)) {
+    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+    const near = ask.options.find((o) => norm(o) === norm(chosen))
+    if (near) die(`--chosen must quote the option verbatim — did you mean "${near}"?`)
+    die(
+      `--chosen "${chosen}" doesn't match any of the ask's options:\n` +
+        ask.options.map((o) => `    · ${o}`).join("\n") +
+        "\n  (quote one verbatim, or use --note for a free-text account)",
+    )
+  }
+  const resolution = {}
+  if (chosen) resolution.chosen = chosen
+  if (by) resolution.by = by
+  if (note) resolution.note = note
+  // `via` says where the unblock came from; out-of-band human answers are
+  // "human". Set it only when there's evidence of one (a chosen/by), never on
+  // withdrawn (nobody acted — that's the point).
+  if (!withdrawn && (chosen || by)) resolution.via = "human"
+  const line = { id: askId, status: withdrawn ? "withdrawn" : "resolved" }
+  if (Object.keys(resolution).length) line.resolution = resolution
+  return { line, warnings }
+}
+
+/** The verbs' shared final step — same transport as `figs push`. */
+async function autoPush() {
+  if (hasFlag("--no-push")) {
+    console.log("figs:   saved locally (--no-push) — `figs push` publishes it")
+    return
+  }
+  if (!(await doPush())) {
+    console.warn("figs: ! saved locally — the push failed (see above); fix and run `figs push`")
+    process.exitCode = 1
+  }
+}
+
+async function reportCmd() {
+  requireFigs()
+  const result = flag("--result")
+  if (!result) {
+    die('report needs --result "<one-line outcome>" — e.g. figs report --result "88% matched · 31 flagged"')
+  }
+  const run = { id: flag("--id") || genId("r"), ts: nowIso(), result }
+  const unit = flag("--unit")
+  if (unit) run.unit = unit
+  const period = flag("--period")
+  if (period) run.period = period
+  const status = flag("--status")
+  if (status) run.status = status
+  const attached = attachFiles(flagAll("--attach"))
+  if (attached.length === 1) run.artifact = attached[0]
+  else if (attached.length > 1) run.artifacts = attached
+  const resolves = flag("--resolves")
+  let resolution = null
+  if (resolves) {
+    run.resolves = resolves
+    resolution = buildResolution(resolves, {
+      chosen: flag("--chosen"),
+      by: flag("--by"),
+      note: flag("--note"),
+    })
+  }
+  const session = captureSession()
+  if (session) run.session = session
+
+  const issues = validateRun(run)
+  if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
+  appendJsonl("runs.jsonl", run)
+  console.log(`figs: ✓ run recorded — ${summarize(run)}`)
+  if (resolution) {
+    for (const w of resolution.warnings) console.warn(`figs: ! ${w}`)
+    appendJsonl("asks.jsonl", resolution.line)
+    console.log(`figs: ✓ ask ${resolves} ${resolution.line.status}`)
+  }
+  await autoPush()
+}
+
+async function askCmd() {
+  requireFigs()
+  let base = {}
+  if (hasFlag("--stdin")) {
+    let raw = ""
+    try {
+      raw = readFileSync(0, "utf8")
+    } catch {
+      /* no stdin */
+    }
+    if (!raw.trim()) die("--stdin given but nothing arrived on stdin — pipe a JSON object")
+    try {
+      base = JSON.parse(raw)
+    } catch (e) {
+      die(`--stdin: invalid JSON: ${e.message}`)
+    }
+    if (!base || typeof base !== "object" || Array.isArray(base)) {
+      die("--stdin must be a single JSON object (one ask)")
+    }
+  }
+  const type = positional() ?? base.type
+  if (!type) die(`ask needs a type: figs ask <${ASK_TYPES.join("|")}> --title "…"`)
+  const ask = { ...base, id: flag("--id") ?? base.id ?? genId("ask"), ts: nowIso(), type }
+  if (!ask.status) ask.status = "open"
+  const title = flag("--title") ?? base.title
+  if (!title) die('ask needs --title "<the ask, in one line>"')
+  ask.title = title
+  for (const [f, k] of [["--need", "need"], ["--found", "found"], ["--unit", "unit"], ["--to", "to"]]) {
+    const v = flag(f)
+    if (v) ask[k] = v
+  }
+  const options = flagAll("--option")
+  if (options.length) ask.options = options
+  for (const o of ask.options ?? []) {
+    if (o.length > 80) {
+      console.warn(
+        `figs: ! option "${o.slice(0, 40)}…" is long — options should be short, stable, quotable (an answer cites one verbatim)`,
+      )
+    }
+  }
+  const details = flagAll("--detail").map((d) => {
+    const i = d.indexOf("=")
+    if (i < 1) die(`--detail must be "Label=Value", got "${d}"`)
+    return { l: d.slice(0, i), v: d.slice(i + 1) }
+  })
+  if (details.length) ask.details = [...(base.details ?? []), ...details]
+  const runRef = flag("--run")
+  if (runRef === "last") {
+    const runs = foldById(readJsonl("runs.jsonl"))
+    if (!runs.length) {
+      die("--run last: no runs in the local runs.jsonl — `figs report` one first, or pass an explicit id")
+    }
+    ask.run = runs.reduce((a, b) => ((a.ts ?? "") > (b.ts ?? "") ? a : b)).id
+  } else if (runRef) ask.run = runRef
+  const attached = attachFiles(flagAll("--attach"))
+  if (attached.length) {
+    ask.refs = [...(base.refs ?? []), ...attached.map((n) => ({ label: n, artifact: n }))]
+  }
+  if (ask.type === "sign-off" && !ask.refs?.length) {
+    console.warn(
+      "figs: ! tip: a sign-off reviews best with attachments — the exact content to approve, plus a brief (what to do once approved + what it requires). Add --attach <file>",
+    )
+  }
+  const session = captureSession()
+  if (session) ask.session = session
+
+  const issues = validateAsk(ask)
+  if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
+  appendJsonl("asks.jsonl", ask)
+  console.log(`figs: ✓ ask raised — ${summarize(ask)}`)
+  if (!ask.to) {
+    console.log("figs:   tip: address asks with --to manager|builder so they route to the right person")
+  }
+  await autoPush()
+  console.log(
+    "figs:   answers arrive out-of-band for now (`figs inbox` is coming) — your human replies in the app thread or directly to you",
+  )
+}
+
+async function resolveCmd() {
+  requireFigs()
+  const askId = positional()
+  if (!askId) die("resolve needs the ask id: figs resolve <ask-id> [--chosen …] [--withdrawn]")
+  const { line, warnings } = buildResolution(askId, {
+    chosen: flag("--chosen"),
+    by: flag("--by"),
+    note: flag("--note"),
+    withdrawn: hasFlag("--withdrawn"),
+  })
+  for (const w of warnings) console.warn(`figs: ! ${w}`)
+  appendJsonl("asks.jsonl", line)
+  console.log(`figs: ✓ ask ${askId} ${line.status} — ${JSON.stringify(line)}`)
+  await autoPush()
+}
+
+/** Validate the local .figs/ payload against the spec — no write, no push. */
 async function doctor() {
   // Local checks first (no token/network needed) — fail fast and offline.
   if (!existsSync(repoDir)) die("no .figs/ here — run `figs init` first")
@@ -751,6 +1300,18 @@ async function doctor() {
     console.log("figs: ✗ .figs/agent.json still has template placeholders — fill these in before pushing:")
     for (const p of placeholders) console.log(`  ${p.path}: ${p.value}`)
     console.log("  (replace the <…> values by reading your own repo, then re-run `figs doctor`)")
+    process.exit(1)
+  }
+
+  // Same local checks the write-path runs — catches hand-authored mistakes
+  // offline, before the server round-trip.
+  const localIssues = validateOutbox(
+    foldById(readJsonl("runs.jsonl")),
+    foldById(readJsonl("asks.jsonl")),
+  )
+  if (localIssues.length) {
+    console.log("figs: ✗ local validation issues:")
+    for (const i of localIssues) console.log(`  ${i}`)
     process.exit(1)
   }
 
@@ -780,25 +1341,50 @@ async function doctor() {
   process.exit(1)
 }
 
+/** `figs push` — the bare transport; exits non-zero on any failure. */
 async function push() {
-  const token = process.env.FIGS_TOKEN || readJson(globalCreds, {}).token
-  if (!token) die("not logged in — run `figs login` (or set FIGS_TOKEN)")
-  await checkVersion({ hardFail: true })
-  if (!existsSync(repoDir)) {
-    die("no .figs/ here — run `figs init` first")
+  if (!(await doPush())) process.exit(1)
+}
+
+/**
+ * The one transport: spine → /api/ingest, artifacts → /api/artifacts/upload.
+ * `figs push` is a thin wrapper; the writing verbs call this after their local
+ * append (auto-push IS push — one transport, many entry points). Runs the same
+ * local checks as `figs doctor` first, so a malformed hand-written line never
+ * reaches the server as a confusing 4xx. Prints its own errors and returns
+ * false on failure — callers decide whether that's fatal.
+ */
+async function doPush() {
+  const fail = (msg) => {
+    console.error(`figs: ✗ push: ${msg}`)
+    return false
   }
+  const token = getToken()
+  if (!token) return fail("not logged in — run `figs login` (or set FIGS_TOKEN)")
+  await checkVersion({ hardFail: true })
+  if (!existsSync(repoDir)) return fail("no .figs/ here — run `figs init` first")
   const config = readJson(join(repoDir, "config.json"), {})
   if (!config.workspaceId || !config.agentId) {
-    die("config missing workspaceId/agentId — run `figs init`")
+    return fail("config missing workspaceId/agentId — run `figs init`")
   }
   const endpoint =
     process.env.FIGS_ENDPOINT || config.endpoint || DEFAULT_ENDPOINT
 
   const agentJson = readJson(join(repoDir, "agent.json"), null)
-  if (!agentJson) die("missing .figs/agent.json")
+  if (!agentJson) return fail("missing .figs/agent.json")
   const agent = { ...agentJson, id: config.agentId }
   const runs = foldById(readJsonl("runs.jsonl"))
   const asks = foldById(readJsonl("asks.jsonl"))
+
+  // Local pre-flight — fail fast, offline, with teaching errors.
+  const placeholders = findPlaceholders(agentJson)
+  if (placeholders.length) {
+    return fail(
+      `agent.json still has template placeholders (${placeholders.map((p) => p.path).join(", ")}) — fill them in; \`figs doctor\` lists them`,
+    )
+  }
+  const issues = validateOutbox(runs, asks)
+  if (issues.length) return fail(`local validation failed:\n  ${issues.join("\n  ")}`)
 
   const base = endpoint.replace(/\/+$/, "")
   let res
@@ -809,17 +1395,17 @@ async function push() {
       body: JSON.stringify({ workspaceId: config.workspaceId, agent, runs, asks }),
     })
   } catch (e) {
-    die(`push failed — cannot reach ${base} (${netReason(e)})`)
+    return fail(`cannot reach ${base} (${netReason(e)})`)
   }
   const text = await res.text()
-  if (!res.ok) die(`push failed (${res.status}): ${text}`)
+  if (!res.ok) return fail(`server rejected it (${res.status}): ${text}`)
   console.log(
     `figs: ✓ pushed ${agent.name ?? agent.id} — ${runs.length} runs, ${asks.length} asks`,
   )
   // The wow-moment link — relay this to your human so they can see the agent.
   console.log(`       view at ${base}/w/${config.workspaceId}`)
 
-  await pushArtifacts(base, token, config, runs, asks)
+  return pushArtifacts(base, token, config, runs, asks)
 }
 
 /**
@@ -836,10 +1422,9 @@ async function pushArtifacts(base, token, config, runs, asks) {
   const refNames = (asks ?? []).flatMap((a) =>
     (a.refs ?? []).map((r) => r.artifact),
   )
-  const names = [
-    ...new Set([...runs.map((r) => r.artifact), ...refNames].filter(Boolean)),
-  ]
-  if (names.length === 0) return
+  const runNames = runs.flatMap((r) => [r.artifact, ...(r.artifacts ?? [])])
+  const names = [...new Set([...runNames, ...refNames].filter(Boolean))]
+  if (names.length === 0) return true
 
   let uploaded = 0
   let unchanged = 0
@@ -889,9 +1474,10 @@ async function pushArtifacts(base, token, config, runs, asks) {
       (missing ? `, ${missing} missing` : "") +
       (failed ? `, ${failed} failed` : ""),
   )
-  // The spine already landed; signal a non-zero exit so an agent's run loop can
-  // catch that an artifact the manager needs to read did not publish.
-  if (failed) process.exit(1)
+  // The spine already landed; a false return lets the caller exit non-zero so
+  // an agent's run loop can catch that an artifact the manager needs to read
+  // did not publish.
+  return failed === 0
 }
 
 function readJsonl(name) {

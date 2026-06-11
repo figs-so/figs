@@ -28,6 +28,7 @@ const mock = {
   workspaces: [],
   versionMin: "0.0.1",
   lastIngest: null,
+  uploads: [],
 }
 let server, base
 
@@ -53,6 +54,10 @@ before(async () => {
         }
         return send(200, { ok: true })
       }
+      if (req.url === "/api/artifacts/upload") {
+        mock.uploads.push(JSON.parse(body))
+        return send(200, { ok: true })
+      }
       send(404, { error: `no mock for ${req.url}` })
     })
   })
@@ -65,7 +70,7 @@ after(() => server.close())
 // ---------- harness ------------------------------------------------------
 // Async on purpose: the mock server lives in THIS process, so the runner must
 // not block the event loop while the child talks to it (spawnSync would).
-function run(args, { cwd, token, env: extra } = {}) {
+function run(args, { cwd, token, env: extra, input } = {}) {
   const home = mkdtempSync(join(tmpdir(), "figs-home-"))
   const env = {
     ...process.env,
@@ -80,6 +85,8 @@ function run(args, { cwd, token, env: extra } = {}) {
       cwd: cwd ?? mkdtempSync(join(tmpdir(), "figs-cwd-")),
       env,
     })
+    if (input !== undefined) child.stdin.write(input)
+    child.stdin.end()
     let out = ""
     child.stdout.on("data", (c) => (out += c))
     child.stderr.on("data", (c) => (out += c))
@@ -267,4 +274,323 @@ test("push hard-fails below the server's CLI floor", async () => {
   } finally {
     mock.versionMin = "0.0.1"
   }
+})
+
+// ---------- the writing verbs: report / ask / resolve -----------------------
+
+import { realpathSync, mkdirSync } from "node:fs"
+
+const readLines = (repo, name) =>
+  readFileSync(join(repo, ".figs", name), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+const lastLine = (repo, name) => readLines(repo, name).at(-1)
+
+test("report writes a stamped run line and pushes it", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  const r = await run(
+    ["report", "--result", "88% matched · 31 flagged", "--unit", "acme", "--status", "warn"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /✓ run recorded/)
+  const runRec = lastLine(repo, "runs.jsonl")
+  assert.match(runRec.id, /^r-/, "id is CLI-generated")
+  assert.match(runRec.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/)
+  assert.equal(runRec.result, "88% matched · 31 flagged")
+  assert.equal(runRec.unit, "acme")
+  assert.equal(runRec.status, "warn")
+  // and the same record reached ingest (auto-push IS push)
+  const pushed = mock.lastIngest.body.runs.find((x) => x.id === runRec.id)
+  assert.ok(pushed, "run must be in the pushed spine")
+})
+
+test("report --id is honored for deliberate stable ids", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["report", "--result", "ok", "--id", "acme-2026-06", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(lastLine(repo, "runs.jsonl").id, "acme-2026-06")
+})
+
+test("report without --result teaches the fix", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["report"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /needs --result/)
+})
+
+test("report --status with a near-miss suggests the valid value", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["report", "--result", "x", "--status", "OK"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /did you mean "ok"\?/)
+  // nothing was written
+  assert.equal(readLines(repo, "runs.jsonl").find((x) => x.result === "x"), undefined)
+})
+
+test("report --no-push saves locally and skips the network", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  const r = await run(["report", "--result", "local only", "--no-push"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /saved locally \(--no-push\)/)
+  assert.equal(mock.lastIngest, null, "no ingest call expected")
+})
+
+test("report with a failing push still saves locally and says so", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["report", "--result", "kept"], { cwd: repo }) // no token → push fails
+  assert.equal(r.code, 1)
+  assert.match(r.out, /not logged in/)
+  assert.match(r.out, /saved locally/)
+  assert.equal(lastLine(repo, "runs.jsonl").result, "kept")
+})
+
+test("report multi-attach copies files, links artifacts[], uploads each", async () => {
+  mock.uploads = []
+  const repo = await pushableRepo()
+  writeFileSync(join(repo, "a.html"), "<h1>a</h1>")
+  writeFileSync(join(repo, "b.md"), "# b")
+  const r = await run(
+    ["report", "--result", "two files", "--attach", join(repo, "a.html"), "--attach", join(repo, "b.md")],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const runRec = lastLine(repo, "runs.jsonl")
+  assert.deepEqual(runRec.artifacts, ["a.html", "b.md"])
+  assert.equal(runRec.artifact, undefined, "plural form only when >1")
+  assert.ok(existsSync(join(repo, ".figs/artifacts/a.html")))
+  assert.deepEqual(mock.uploads.map((u) => u.name).sort(), ["a.html", "b.md"])
+})
+
+test("report single attach uses the singular artifact field", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(join(repo, "one.html"), "<p>1</p>")
+  const r = await run(["report", "--result", "one", "--attach", join(repo, "one.html"), "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  const runRec = lastLine(repo, "runs.jsonl")
+  assert.equal(runRec.artifact, "one.html")
+  assert.equal(runRec.artifacts, undefined)
+})
+
+test("attach refuses to overwrite an artifact with different content (immutable)", async () => {
+  const repo = await pushableRepo()
+  mkdirSync(join(repo, ".figs/artifacts"), { recursive: true })
+  writeFileSync(join(repo, ".figs/artifacts/report.html"), "<p>original</p>")
+  writeFileSync(join(repo, "report.html"), "<p>changed</p>")
+  const r = await run(["report", "--result", "x", "--attach", join(repo, "report.html")], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /immutable/)
+  assert.match(r.out, /report-v2\.html/)
+  assert.equal(
+    readFileSync(join(repo, ".figs/artifacts/report.html"), "utf8"),
+    "<p>original</p>",
+    "original bytes untouched",
+  )
+})
+
+test("ask raises a self-contained ask and links --run last", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  writeFileSync(join(repo, "previews.html"), "<p>emails</p>")
+  await run(["report", "--result", "drafted", "--id", "recon-1", "--no-push"], { cwd: repo, token: "t" })
+  const r = await run(
+    [
+      "ask", "sign-off",
+      "--title", "Send 10 payment reminders",
+      "--need", "Approve sending exactly these emails",
+      "--option", "Send all 10", "--option", "Hold the two large ones",
+      "--detail", "Total overdue=$4,820",
+      "--attach", join(repo, "previews.html"),
+      "--to", "manager",
+      "--run", "last",
+    ],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const ask = lastLine(repo, "asks.jsonl")
+  assert.match(ask.id, /^ask-/)
+  assert.equal(ask.type, "sign-off")
+  assert.equal(ask.status, "open")
+  assert.equal(ask.run, "recon-1", "--run last resolves to the newest local run")
+  assert.deepEqual(ask.options, ["Send all 10", "Hold the two large ones"])
+  assert.deepEqual(ask.details, [{ l: "Total overdue", v: "$4,820" }])
+  assert.deepEqual(ask.refs, [{ label: "previews.html", artifact: "previews.html" }])
+  assert.ok(mock.lastIngest.body.asks.find((a) => a.id === ask.id), "ask reached ingest")
+  assert.doesNotMatch(r.out, /sign-off reviews best with attachments/, "no tip when attached")
+})
+
+test("ask sign-off without attachments prints the execution-brief tip", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "sign-off", "--title", "Approve thing", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /exact content to approve/, "tip expected")
+})
+
+test("ask with a bogus type suggests the valid one", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "signoff", "--title", "x"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /did you mean "sign-off"\?/)
+})
+
+test("ask without a title teaches the fix", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "fyi"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /needs --title/)
+})
+
+test("ask --stdin takes a JSON object; flags still stamp and validate", async () => {
+  const repo = await pushableRepo()
+  const body = {
+    type: "needs-decision",
+    title: "No bridge rule for prefixed invoice numbers",
+    found: "~180 rows can't be matched safely; a long explanation lives here.",
+    need: "Confirm the bridge rule.",
+    options: ["Strip the alpha prefix", "Treat as out-of-scope"],
+  }
+  const r = await run(["ask", "--stdin", "--no-push"], {
+    cwd: repo,
+    token: "t",
+    input: JSON.stringify(body),
+  })
+  assert.equal(r.code, 0, r.out)
+  const ask = lastLine(repo, "asks.jsonl")
+  assert.equal(ask.type, "needs-decision")
+  assert.equal(ask.found, body.found)
+  assert.ok(ask.id && ask.ts, "CLI stamps id + ts onto stdin asks")
+})
+
+test("resolve enforces verbatim --chosen with a did-you-mean", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-bridge","ts":"2026-06-10T00:00:00Z","type":"needs-decision","title":"Bridge rule","options":["Strip the alpha prefix","Treat as out-of-scope"]}\n`,
+  )
+  const bad = await run(["resolve", "a-bridge", "--chosen", "strip the alpha prefix"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(bad.code, 1)
+  assert.match(bad.out, /did you mean "Strip the alpha prefix"\?/)
+
+  const good = await run(
+    ["resolve", "a-bridge", "--chosen", "Strip the alpha prefix", "--by", "Sarah", "--no-push"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(good.code, 0, good.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "resolved")
+  assert.deepEqual(fold.resolution, { chosen: "Strip the alpha prefix", by: "Sarah", via: "human" })
+})
+
+test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"blocked","title":"Stuck"}\n`,
+  )
+  const conflict = await run(["resolve", "a-old", "--withdrawn", "--chosen", "x"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(conflict.code, 1)
+  assert.match(conflict.out, /mutually exclusive/)
+
+  const r = await run(["resolve", "a-old", "--withdrawn", "--note", "no longer needed", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "withdrawn")
+  assert.equal(fold.resolution.via, undefined, "withdrawn never claims a via")
+})
+
+test("resolve warns (but writes) when the ask isn't local", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["resolve", "ghost-ask", "--note", "done", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /isn't in the local asks\.jsonl/)
+  assert.equal(lastLine(repo, "asks.jsonl").id, "ghost-ask")
+})
+
+test("report --resolves records the run and closes the ask in one stroke", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"send-ok","ts":"2026-06-10T00:00:00Z","type":"sign-off","title":"Send 10 reminders"}\n`,
+  )
+  const r = await run(
+    ["report", "--result", "sent 10/10", "--resolves", "send-ok", "--by", "Sarah"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  const runRec = lastLine(repo, "runs.jsonl")
+  assert.equal(runRec.resolves, "send-ok")
+  const askFold = mock.lastIngest.body.asks.find((a) => a.id === "send-ok")
+  assert.equal(askFold.status, "resolved")
+  assert.equal(askFold.resolution.via, "human")
+})
+
+test("push refuses a malformed hand-written line with a teaching error", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"bad1","ts":"2026-06-10T00:00:00Z","type":"signoff","title":"Typo type"}\n`,
+  )
+  const r = await run(["push"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /did you mean "sign-off"\?/)
+})
+
+test("report captures the session block from a Claude Code transcript", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  // a fake HOME holding a transcript for exactly this cwd
+  const home = mkdtempSync(join(tmpdir(), "figs-sess-home-"))
+  const dashed = realpathSync(repo).replace(/[\/:]/g, "-")
+  const projDir = join(home, ".claude", "projects", dashed)
+  mkdirSync(projDir, { recursive: true })
+  const sessionId = "3fffcd97-d4f5-4b77-8243-8f450d7c9614"
+  writeFileSync(
+    join(projDir, `${sessionId}.jsonl`),
+    `{"timestamp":"2026-06-11T01:00:00Z","type":"user"}\n` +
+      `{"timestamp":"2026-06-11T01:00:05Z","type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200}}}\n` +
+      `{"timestamp":"2026-06-11T01:00:09Z","type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":999}}}\n` +
+      `{"timestamp":"2026-06-11T01:00:10Z","type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}\n`,
+  )
+  const r = await run(["report", "--result", "traced"], {
+    cwd: repo,
+    token: "t",
+    env: { HOME: home },
+  })
+  assert.equal(r.code, 0, r.out)
+  const s = mock.lastIngest.body.runs.find((x) => x.result === "traced").session
+  assert.ok(s, "session block expected")
+  assert.equal(s.runtime, "claude-code")
+  assert.equal(s.sessionId, sessionId)
+  assert.equal(s.model, "claude-fable-5")
+  assert.equal(s.startedAt, "2026-06-11T01:00:00Z")
+  assert.deepEqual(s.tokens, { input: 110, output: 55, cacheRead: 1100, cacheWrite: 220 })
+  rmSync(home, { recursive: true, force: true })
 })
