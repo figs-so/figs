@@ -578,21 +578,22 @@ test("push refuses a malformed hand-written line with a teaching error", async (
   assert.match(r.out, /did you mean "sign-off"\?/)
 })
 
-test("report captures the session block from a Claude Code transcript", async () => {
+test("report never stamps an inferred session block (a trace must be true or absent)", async () => {
+  // Auto-capture was removed in 0.5.0: inferring the session from "the newest
+  // transcript on this machine" stamped the WRONG runtime/model in nested and
+  // headless runs — a fabricated audit line. Even with a perfectly matching
+  // transcript on disk, `report` must not invent a trace.
   mock.lastIngest = null
   const repo = await pushableRepo()
-  // a fake HOME holding a transcript for exactly this cwd
+  // a fake HOME holding a transcript for exactly this cwd — the old capture's happy path
   const home = mkdtempSync(join(tmpdir(), "figs-sess-home-"))
   const dashed = realpathSync(repo).replace(/[\/:]/g, "-")
   const projDir = join(home, ".claude", "projects", dashed)
   mkdirSync(projDir, { recursive: true })
-  const sessionId = "3fffcd97-d4f5-4b77-8243-8f450d7c9614"
   writeFileSync(
-    join(projDir, `${sessionId}.jsonl`),
+    join(projDir, "3fffcd97-d4f5-4b77-8243-8f450d7c9614.jsonl"),
     `{"timestamp":"2026-06-11T01:00:00Z","type":"user"}\n` +
-      `{"timestamp":"2026-06-11T01:00:05Z","type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200}}}\n` +
-      `{"timestamp":"2026-06-11T01:00:09Z","type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":999}}}\n` +
-      `{"timestamp":"2026-06-11T01:00:10Z","type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}\n`,
+      `{"timestamp":"2026-06-11T01:00:05Z","type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":100,"output_tokens":50}}}\n`,
   )
   const r = await run(["report", "--result", "traced"], {
     cwd: repo,
@@ -600,13 +601,8 @@ test("report captures the session block from a Claude Code transcript", async ()
     env: { HOME: home },
   })
   assert.equal(r.code, 0, r.out)
-  const s = mock.lastIngest.body.runs.find((x) => x.result === "traced").session
-  assert.ok(s, "session block expected")
-  assert.equal(s.runtime, "claude-code")
-  assert.equal(s.sessionId, sessionId)
-  assert.equal(s.model, "claude-fable-5")
-  assert.equal(s.startedAt, "2026-06-11T01:00:00Z")
-  assert.deepEqual(s.tokens, { input: 110, output: 55, cacheRead: 1100, cacheWrite: 220 })
+  const rec = mock.lastIngest.body.runs.find((x) => x.result === "traced")
+  assert.equal(rec.session, undefined, "no session block — the CLI must not infer one")
   rmSync(home, { recursive: true, force: true })
 })
 

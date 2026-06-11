@@ -59,9 +59,9 @@ server aggregates them.
 **Two ways to write the outbox — both first-class:**
 - **The verbs (the easy path): `figs report` · `figs ask` · `figs resolve`.** You supply the
   content; the CLI does the bookkeeping you'd otherwise get wrong — stamps the id and the real
-  clock time, captures the session trace from your runtime's own records, validates the shape
-  with errors that teach, copies attachments into `artifacts/`, and **pushes automatically**
-  (`--no-push` to batch). Each verb writes one line into the same files described below.
+  clock time, validates the shape with errors that teach, copies attachments into `artifacts/`,
+  and **pushes automatically** (`--no-push` to batch). Each verb writes one line into the same
+  files described below.
 - **Hand-writing the JSONL** stays fully supported forever — the files are the protocol; the
   verbs are sugar over them. If you hand-edit, run **`figs doctor`** after — it validates
   `.figs/` against the spec and quotes back the expected shape when a field is wrong (`figs push`
@@ -260,11 +260,10 @@ figs report --result "88% matched · 31 keys flagged" --unit acme --period 2025-
   --attach ./acme-2025-11.html
 ```
 
-The CLI writes the line below for you — id and `ts` stamped, the `session` trace captured
-automatically from your runtime's own records (Claude Code and Codex transcripts; plus your repo's
-commit), the attachment copied into `artifacts/` and linked, then pushed. `--attach` repeats for
-multiple files; `--id` is the job's stable id — name it well (`recon-acme-2026-11`); reporting
-the same id again folds onto that job's row (progress, re-runs for the same period).
+The CLI writes the line below for you — id and `ts` stamped, the attachment copied into
+`artifacts/` and linked, then pushed. `--attach` repeats for multiple files; `--id` is the
+job's stable id — name it well (`recon-acme-2026-11`); reporting the same id again folds onto
+that job's row (progress, re-runs for the same period).
 
 The line it writes (hand-author this shape if you're not using the verb):
 
@@ -282,12 +281,14 @@ The line it writes (hand-author this shape if you're not using the verb):
   a counter** for ids (two machines would silently fold over each other's runs) — content-derived
   (`acme-2025-11`) or generated, nothing sequential.
 
-### `session` — where this ran (optional, recommended)
+### `session` — where this ran (optional; only if you can prove it)
 
 A `session` object on a run (or an ask) lets humans trace it: runtime, model, session id, repo
-commit, token cost. **`figs report` and `figs ask` capture it automatically** from your runtime's
-own records — you never type it. Hand-authors: copy what your runtime's session records expose
-(never guess), shaped like:
+commit, token cost. **The CLI does not write this block** — it used to infer one from the newest
+transcript on the machine, and in nested/headless runs that stamped the *wrong* runtime and model:
+a fabricated audit line, worse than none. A trace must be **true or absent, never false**. Include
+it only when you can **copy provable values from your runtime's own records** (its transcript /
+session metadata — never your memory, never a guess); otherwise leave it out entirely. Shape:
 
 ```json
 "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "<uuid>",

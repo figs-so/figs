@@ -9,7 +9,7 @@
  *   figs workspaces                     list the user's workspaces               [--json]
  *   figs init --workspace <slug-or-id> [--endpoint <url>]
  *                                         create .figs/config.json + GUIDE.md (generates a stable agent id)
- *   figs report --result "…"            record a run (stamps id/ts/session, --attach files, auto-push)
+ *   figs report --result "…"            record a run (stamps id/ts, --attach files, auto-push)
  *   figs ask <type> --title "…"         raise an ask (self-contained: options/details/attachments, auto-push)
  *   figs inbox [<ask-id>]               what needs you — answers/verdicts from your humans (pure read)
  *   figs resolve <ask-id>               close an ask (verbatim-checks --chosen; cites the Figs answer it acted on)
@@ -42,16 +42,14 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, extname, join } from "node:path"
 import { createHash, randomUUID } from "node:crypto"
-import { execSync, spawn } from "node:child_process"
+import { spawn } from "node:child_process"
 
 // Single source of truth for the version: package.json (shipped alongside this
 // file in the published package). One edit keeps `figs version`, the floor
@@ -115,15 +113,15 @@ const COMMANDS = {
     flags: [
       "--result", "--id", "--unit", "--period", "--status", "--attach", "--no-push",
     ],
-    desc: "record a run — one job's row in runs.jsonl; stamps id/ts/session, pushes",
+    desc: "record a run — one job's row in runs.jsonl; stamps id/ts, pushes",
     more: [
       "One run = one JOB — a unit of work your manager would recognize; the runs",
       "list reads as the job list. Give a job a stable, meaningful --id",
       "(recon-acme-2026-11); reporting the same id again folds onto that job's row",
       "(progress evolves: blocked → ok). Sittings/sessions never mint runs —",
       "stopping to wait for a human is not a job.",
-      "You supply the content; the CLI does the bookkeeping (id, real-clock ts, session",
-      "trace from your runtime's own records, validation, artifact copy, push).",
+      "You supply the content; the CLI does the bookkeeping (id, real-clock ts,",
+      "validation, artifact copy, push).",
       "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
       "--no-push writes locally only; `figs push` publishes later.",
       "Closing an ask is `figs resolve` — a close is not a job; never report one.",
@@ -948,8 +946,16 @@ async function init() {
 // ====================== the writing verbs ===================================
 // report / ask / resolve — sugar over the same files (hand-writing stays
 // first-class). The agent supplies content; the CLI stamps id + real-clock ts,
-// captures the session trace, validates with teaching errors, copies
-// attachments, then invokes the same push as `figs push`.
+// validates with teaching errors, copies attachments, then invokes the same
+// push as `figs push`.
+//
+// NOTE — no session auto-capture (removed in 0.5.0). The CLI used to infer a
+// `session` trace (runtime/model/tokens) from "the newest transcript on this
+// machine"; in nested/headless runs that stamped the WRONG runtime+model — a
+// fabricated audit line (e.g. gpt-5.5 on a Claude Code run). A trace must be
+// true or absent, never false, so inference is gone. The spec's optional
+// `session` block remains legal for integrations that can copy provable values
+// from the runtime's own records at work-time.
 
 function requireFigs() {
   if (!existsSync(repoDir)) die("no .figs/ here — run `figs init` first")
@@ -961,12 +967,6 @@ function requireFigs() {
 function appendJsonl(name, obj) {
   appendFileSync(join(repoDir, name), JSON.stringify(obj) + "\n")
 }
-/** Print a record without its (noisy) session block. */
-function summarize(obj) {
-  const { session, ...rest } = obj
-  return JSON.stringify(rest) + (session ? "  (+ session trace)" : "")
-}
-
 /** Copy attachments into artifacts/ — ext + size checks; immutable once there. */
 function attachFiles(paths) {
   const names = []
@@ -992,137 +992,6 @@ function attachFiles(paths) {
     names.push(name)
   }
   return names
-}
-
-// ---------- session auto-capture --------------------------------------------
-// The trace comes from the runtime's own records, never from the model's
-// memory. Best-effort by design: any failure → the optional block is omitted;
-// a report is never blocked on trace capture.
-function captureSession() {
-  try {
-    const candidates = [findClaudeTranscript(), findCodexTranscript()].filter(Boolean)
-    if (!candidates.length) return undefined
-    // The transcript being written *now* is the newest one, whichever runtime
-    // owns it. Anything older than a day is a leftover, not this session.
-    const best = candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
-    if (Date.now() - best.mtimeMs > 86400000) return undefined
-    const session = best.parse(best.path)
-    if (!session) return undefined
-    const commit = captureCommit()
-    if (commit) session.commit = commit
-    return session
-  } catch {
-    return undefined
-  }
-}
-function newestFile(dir, filter) {
-  if (!existsSync(dir)) return null
-  let best = null
-  for (const f of readdirSync(dir)) {
-    if (!filter(f)) continue
-    const p = join(dir, f)
-    let st
-    try {
-      st = statSync(p)
-    } catch {
-      continue
-    }
-    if (!st.isFile()) continue
-    if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, name: f, mtimeMs: st.mtimeMs }
-  }
-  return best
-}
-function findClaudeTranscript() {
-  const dir = join(homedir(), ".claude", "projects", process.cwd().replace(/[\\/:]/g, "-"))
-  const f = newestFile(dir, (n) => n.endsWith(".jsonl"))
-  return f ? { ...f, parse: parseClaudeTranscript } : null
-}
-function parseClaudeTranscript(path) {
-  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  let model, startedAt
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue
-    let e
-    try {
-      e = JSON.parse(line)
-    } catch {
-      continue
-    }
-    if (!startedAt && typeof e.timestamp === "string") startedAt = e.timestamp
-    const m = e.message
-    if (!m?.usage || m.model === "<synthetic>") continue
-    if (typeof m.model === "string") model = m.model
-    tokens.input += m.usage.input_tokens ?? 0
-    tokens.output += m.usage.output_tokens ?? 0
-    tokens.cacheRead += m.usage.cache_read_input_tokens ?? 0
-    tokens.cacheWrite += m.usage.cache_creation_input_tokens ?? 0
-  }
-  const out = { runtime: "claude-code", sessionId: basename(path, ".jsonl") }
-  if (model) out.model = model
-  if (startedAt) out.startedAt = startedAt
-  if (tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite > 0) out.tokens = tokens
-  return out
-}
-function findCodexTranscript() {
-  const root = join(homedir(), ".codex", "sessions")
-  if (!existsSync(root)) return null
-  const desc = (dir) => {
-    try {
-      return readdirSync(dir).sort().reverse()
-    } catch {
-      return []
-    }
-  }
-  for (const y of desc(root)) {
-    for (const m of desc(join(root, y))) {
-      for (const d of desc(join(root, y, m))) {
-        const f = newestFile(join(root, y, m, d), (n) => n.startsWith("rollout-") && n.endsWith(".jsonl"))
-        if (f) return { ...f, parse: parseCodexTranscript }
-      }
-    }
-  }
-  return null
-}
-function parseCodexTranscript(path) {
-  let model, usage, startedAt
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue
-    let e
-    try {
-      e = JSON.parse(line)
-    } catch {
-      continue
-    }
-    if (!startedAt && typeof e.timestamp === "string") startedAt = e.timestamp
-    const p = e.payload ?? e
-    if (!model && typeof p?.model === "string") model = p.model
-    const u = p?.info?.total_token_usage ?? p?.total_token_usage
-    if (u) usage = u
-  }
-  const out = { runtime: "codex" }
-  const uuid = basename(path).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-  if (uuid) out.sessionId = uuid[0]
-  if (model) out.model = model
-  if (startedAt) out.startedAt = startedAt
-  if (usage) {
-    out.tokens = {
-      input: usage.input_tokens ?? 0,
-      output: usage.output_tokens ?? 0,
-      cacheRead: usage.cached_input_tokens ?? 0,
-    }
-  }
-  return out
-}
-function captureCommit() {
-  try {
-    const opts = { stdio: ["ignore", "pipe", "ignore"] }
-    const sha = execSync("git rev-parse --short HEAD", opts).toString().trim()
-    if (!sha) return undefined
-    const dirty = execSync("git status --porcelain", opts).toString().trim()
-    return dirty ? `${sha}+dirty` : sha
-  } catch {
-    return undefined
-  }
 }
 
 // ---------- the inbox (the DOWN direction — a pure read) ---------------------
@@ -1415,13 +1284,10 @@ async function reportCmd() {
   const attached = attachFiles(flagAll("--attach"))
   if (attached.length === 1) run.artifact = attached[0]
   else if (attached.length > 1) run.artifacts = attached
-  const session = captureSession()
-  if (session) run.session = session
-
   const issues = validateRun(run)
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("runs.jsonl", run)
-  console.log(`figs: ✓ run recorded — ${summarize(run)}`)
+  console.log(`figs: ✓ run recorded — ${JSON.stringify(run)}`)
   await autoPush()
 }
 
@@ -1487,13 +1353,10 @@ async function askCmd() {
       "figs: ! tip: a sign-off reviews best with attachments — the exact content to approve, plus a brief (what to do once approved + what it requires). Add --attach <file>",
     )
   }
-  const session = captureSession()
-  if (session) ask.session = session
-
   const issues = validateAsk(ask)
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("asks.jsonl", ask)
-  console.log(`figs: ✓ ask raised — ${summarize(ask)}`)
+  console.log(`figs: ✓ ask raised — ${JSON.stringify(ask)}`)
   if (!ask.to) {
     console.log("figs:   tip: address asks with --to manager|builder so they route to the right person")
   }
