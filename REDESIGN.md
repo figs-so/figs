@@ -1,444 +1,423 @@
-# REDESIGN — the local-first CLI
+# REDESIGN — the local-first CLI (FINAL)
 
-> **Working doc** (2026-06-12). The design for making `figs` a 100/100 open-source CLI:
-> **fully usable with zero account, strictly better with one.** Delete this file once shipped —
-> its content lands in `README.md`, `GUIDE.md`, `SPEC.md`, and `figs.mjs` itself.
-> Status: **design agreed, not yet implemented.** We have 0 users — breaking changes are free
-> and we should spend that freedom now.
+> **Working doc, final version** (2026-06-12). The agreed design for making `figs` a 100/100
+> open-source CLI: **fully usable with zero account, strictly better with one.** Reviewed by
+> two independent agents (fresh Claude session + Codex), every finding adjudicated with Wayne;
+> all decisions below are settled. Delete this file once shipped — its content lands in
+> `SPEC.md` (v2), `README.md`, `GUIDE.md`, `CLAUDE.md`, and `figs.mjs`. The decision trail is
+> this file's git history.
+> Status: **design final, not yet implemented.** 0 users — the breaking wave is free and ships
+> as **CLI 1.0.0 + `figs-spec` v2**.
 
 ---
 
-## 1. The diagnosis
+## 1. The diagnosis (why a re-foundation, not patches)
 
 **The spec says local-first; the CLI's front door is remote-first.** `SPEC.md` §1 lists
-*Local-first* as the second design principle, and the README calls `.figs` an open protocol
-anyone can implement. But the reference CLI contradicts both at the entry point:
+*Local-first* as a founding principle, and the README calls `.figs` an open protocol anyone
+can implement. The reference CLI contradicts both at the entry point:
 
-| # | Gap | Where |
-|---|-----|-------|
-| 1 | **`figs init` requires an account.** No token + no `--workspace` → dies with "run `figs login` first". Workspaces are minted server-side, so a no-account user cannot init at all — and `requireFigs()` demands `workspaceId`, so report/checkpoint/ask/resolve are all transitively account-gated. | `figs.mjs` `resolveWorkspaceId`, `requireFigs` |
-| 2 | **`figs doctor` dies without login** after all local checks pass — yet README calls it "the conformance check for hand-authored or non-CLI setups". An open standard whose validator needs an account isn't open. | `figs.mjs` `doctor()` |
-| 3 | **Writing verbs exit 1 without a token.** The record is safely written locally, then the auto-push fails and the verb exits non-zero. To an agent, exit 1 = the report failed. There is no notion of a deliberate local mode. | `autoPush()` |
-| 4 | **Teaching errors form a circle that ends at "create an account."** `requireFigs` → "run `figs init`" → "run `figs login`" → sign up. No documented no-account path anywhere (README quickstart leads with `login`; `create-openfigs` prints `figs login && figs init`). | help/README/onramps |
-| 5 | **`figs inbox` is remote-only — including the parts that are local data.** Unfinished (in-flight) jobs are *fetched from the server* even though `runs.jsonl` on disk is the source. And there is no local answer channel at all. | `inboxCmd`, `fetchInbox` |
-| 6 | **Auth is 90% right but has two non-standard edges:** a custom `x-figs-token` header instead of `Authorization: Bearer`, and one global token that is endpoint-blind (switch `FIGS_ENDPOINT` to localhost and the CLI sends your prod token there). | `request()`, `saveToken()` |
+| # | Gap (as shipped, 0.8.0) |
+|---|---|
+| 1 | `figs init` requires an account — no token + no `--workspace` dies; workspaces are server-minted, so a no-account user cannot init at all; `requireFigs()` demands `workspaceId`, transitively gating every writing verb |
+| 2 | `figs doctor` dies "not logged in" after all local checks pass — yet it's billed as the conformance check for hand-authored setups |
+| 3 | Writing verbs exit 1 without a token even though the record was written — and an agent's reflex to exit 1 is to re-run the verb, minting duplicate records |
+| 4 | Teaching-error chains terminate at "create an account"; README/onramps lead with `login` |
+| 5 | `figs inbox` is fully remote — even in-flight jobs (local data in `runs.jsonl`) are fetched from the server; no local answer channel exists |
+| 6 | Auth: custom `x-figs-token` header; one endpoint-blind global token |
 
-Root cause: the CLI was grown from the hosted app outward (login → workspace → push), instead
-of from the files outward (init → work → optionally publish). The fix is a re-foundation, not
-six patches.
+Root cause: the CLI was grown app-outward (login → workspace → push) instead of files-outward
+(init → work → optionally publish).
 
 ---
 
 ## 2. North star: the git mental model
 
-**Map the CLI onto git.** Agents know git natively — adopting its shape means zero learning
-curve for the primary audience, and git is the canonical proof that local-first + hosted-better
-works as a product (git → GitHub):
+Agents know git natively; map onto it and the learning curve vanishes:
 
 | git | figs | Property |
 |---|---|---|
-| `git init` | `figs init` | purely local, zero prerequisites, instant value |
-| `git remote add origin` | `figs link` *(new)* | connecting is a separate, later, optional act |
-| `git commit` | `figs report` / `checkpoint` / `ask` / `resolve` | recording works offline, always |
-| `git push` | `figs push` | the one explicit outward act — now carries answers too |
-| `git pull` | *(inside `figs inbox`)* | sync is internal, soft, and happens where the data is used — agents get one correct session-start command, no separate ritual |
+| `git init` | `figs init` | purely local, **zero flags**, zero prerequisites, instant value |
+| `git remote add origin` | `figs link` *(new)* | connecting is a separate, later, optional act — the ONLY place remote config exists |
+| `git commit` | `report` / `checkpoint` / `ask` / `answer` / `resolve` | recording works offline, always |
+| `git push` | `figs push` | the one explicit outward act — spine + artifacts + answers |
+| `git pull` | *(inside `figs inbox`)* | the only down-sync, internal and soft — one correct session-start command, no separate ritual |
 | `git status` | `figs status` | local truth first, remote state when available |
-| GitHub PRs/reviews | the app's inbox + answers | the multiplayer layer is where the hosted product earns its keep |
+| GitHub | the hosted app | the multiplayer layer is where the closed product earns its keep |
 
-**Three layers, documented everywhere in these words:**
+**Three layers, in these words everywhere:**
+1. **The protocol** — the `.figs/` files. Tool-independent.
+2. **The local CLI** — correctness + convenience over the files (stamping, folding,
+   validation, the session ritual). Needs only a filesystem. **The complete product.**
+3. **The connected layer** — publishing, the org chart, multiplayer answers. Strictly additive.
 
-1. **The protocol** — the `.figs/` files. Tool-independent; anything can read/write them.
-2. **The local CLI** — correctness + convenience over the files: id/ts stamping, fold-by-id,
-   validation with teaching errors, the session ritual (inbox → checkpoint → report). Needs
-   nothing but a filesystem. **This is the product a no-account user gets, whole.**
-3. **The connected layer** — an account + a workspace: publishing, the org chart, and
-   *verified, attributed* human answers. Strictly additive.
-
-The honest sales line that falls out: **local = the full loop, self-reported · linked = the
-same loop, verified and multiplayer.** Auth buys attribution, not functionality.
+The honest pitch: **local = the full loop, self-reported · linked = the same loop, attributed
+and multiplayer.** (README leads the linked pitch with *multiplayer + fleet view* — "verified
+answers" is a thin delta for a solo user; the team is the customer.)
 
 ---
 
-## 3. The state model (the keystone)
+## 3. The state model (keystone #1)
 
-Two orthogonal bits, both explicit, no heuristics:
+Two orthogonal facts, both explicit, no heuristics:
 
-- **local vs linked** — does `config.json` have a `workspaceId`? Absent = **local mode**
-  (deliberate, first-class). Present = **linked** (this repo intends to publish).
+- **local vs linked** — does `config.json` have a `workspaceId`? Local-mode config is
+  **`{ agentId }` only** — zero remote concepts in an unlinked repo (the endpoint is a
+  *connection* property and is written by `link`, not `init`).
 - **authenticated** — does this machine have a token (`~/.figs/credentials.json` / `FIGS_TOKEN`)?
 
-**The rule that fixes every exit-code question:** *the config declares intent; the CLI errors
-only when declared intent can't be met.*
+**The rule: the config declares intent; the CLI errors only when declared intent can't be met.**
 
-| State | Writing verbs | Push behavior |
+### Exit codes (uniform, documented in help + README)
+
+| Code | Meaning | Agent's correct reaction |
 |---|---|---|
-| local | write, validate, **exit 0** | not attempted — one calm line: `local mode — figs link to publish` |
-| linked, no token | write, **exit 1** | attempted contract unmet: `not logged in — run figs login` |
-| linked, push fails (network/4xx) | write, **exit 1** | record is safe locally; `fix and run figs push` |
+| `0` | recorded (and published, if linked) | continue |
+| `1` | **nothing was written** — bad input, unmeetable intent, broken state | fix the input |
+| `2` | **recorded locally; publish failed** (network, server, or linked-but-no-token) | `figs push` later — **never re-run the verb** (re-running mints duplicates) |
+
+| State | Writing verbs | Push |
+|---|---|---|
+| local | write, **exit 0** | not attempted; one calm line: `local mode — figs link to publish` |
+| linked + `--no-push` | write, **exit 0** | deliberately deferred |
+| linked, no token | write, **exit 2** | `not logged in — figs login, then figs push` |
+| linked, push fails | write, **exit 2** | record safe locally; `figs push` retries |
 | linked, push ok | write, exit 0 | pushed |
 
-A missing token in local mode is a *state*, not an error. A missing token in linked mode is a
-real error, because the repo said it publishes. `checkpoint`'s loud "NOT protecting the job"
-warning fires only when linked (in local mode the local file *is* the protection).
+`checkpoint`'s loud "this checkpoint is NOT protecting the job yet" warning fires only when
+linked (in local mode the file *is* the protection).
 
 ---
 
-## 4. Verb-by-verb target
+## 4. The topology rule (keystone #2 — replaces the old sync rulebook)
 
-| Verb | Today (no account) | Target — local | Target — linked |
-|---|---|---|---|
-| `init` | **dies** | scaffolds fully, mints `agentId`, exit 0 | `--workspace` flag = init + link sugar |
-| `link` *(new)* | — | bare: lists workspaces (needs token); `--workspace <slug\|uuid>` sets it | same; slug resolution needs token, UUID doesn't |
-| `report` / `checkpoint` / `ask` / `answer` / `resolve` | write then **exit 1** (`answer` doesn't exist) | write, exit 0, no push attempt | write + push; failure exit 1 |
-| `inbox` | **dies** | pure local read: in-flight jobs + open asks + `answers.jsonl` threads | soft down-sync first, then the same local read (§5); `inbox <ask-id>` restores artifacts |
-| `doctor` | local checks then **dies** | full conformance offline, exit 0 (`server validation skipped` note) | + server validate as a bonus layer |
-| `status` | works | works — shows `mode: local` and what linking adds | works |
-| `push` | fails "not logged in" | fails clearly: `not linked — run figs link` | requires token (correct today) |
-| `login` / `logout` / `workspaces` | inherently connected — correct | unchanged | unchanged |
+**Supported write topology: one agent = one repo = one machine.** Decided over the
+alternative (machinery to reconcile multi-machine views) because it makes the
+worst-of-the-worst failure — *machine B sees machine A's in-flight job as "hanging" and
+redoes finished work* — **structurally impossible: runs and asks never sync down, so another
+machine's work is never visible in your inbox to wrongly pick up.** You can't double-start
+what you can't see. The fleet-wide view across machines is exactly what the app is for.
 
-Per-verb notes:
+- **Agent ledgers (`runs.jsonl`, `asks.jsonl`): local is the source of truth, one-way UP.**
+  The server is an aggregation mirror for humans, never an authority over the agent's files.
+  Nothing ever writes these files but this repo's own verbs.
+- **Answers (`answers.jsonl`): the one two-way file — and the one where conflict is
+  mathematically impossible.** Events are immutable, ids minted once by whoever creates the
+  event; up (push) and down (inbox sync) both reduce to *append if id absent*. Any order, any
+  repetition, same result.
+- **Concurrent sessions on the same machine are fine** (same files, append-only writes,
+  fold-by-id; see crash tolerance §7).
+- **Multi-machine is unsupported-but-not-forbidden:** commit the outbox and manage the merge
+  yourself — at your own risk, documented honestly. Belt-and-braces server rule (one `if`):
+  **a push never regresses a closed/settled record back to open/in-flight** — no longer
+  load-bearing, kept to protect the at-your-own-risk crowd.
 
-- **`init`** never touches the network. Output must state the instant value (§7) *and* both
-  next paths: "you're fully operational locally · `figs link` when you want it on app.figs.so".
-  `--workspace` stays as the one-command happy path for already-logged-in users.
-- **`link`** absorbs everything `init` currently does with workspaces (slug resolution,
-  single-workspace default, list-and-choose). Unlinking = delete the field from `config.json`;
-  no verb needed (keep the surface small).
-- **`doctor`** becomes the spec's reference validator: local validation is normative and
-  account-free; server validation is an additive second opinion. Relax its config requirement
-  to `agentId`-only. Give it a unified `--json` (local + server issues, one shape).
-- **`requireFigs()`** relaxes to `agentId`-only; only `push`/`link` care about `workspaceId`.
+**Two edges, priced in and documented honestly:**
+- **Fresh clone / machine replacement:** the journal is gitignored → a new machine starts a
+  fresh journal. The app retains all history for humans; the local inbox simply starts empty.
+  The docs say it plainly: *"your journal lives on this machine; the app is the durable
+  record your humans see."*
+- **Orphan answers:** an answer can sync down for an ask id not in this journal (pre-clone
+  ask). Inbox still **shows** it (events carry the ask id) with a note — *"ask not in this
+  copy's journal; full context in the app"* — and `figs resolve <id>` still works (a close
+  fold on a bare id is legal; the server folds it onto the full record). The ask record
+  itself is never written down.
 
 ---
 
-## 5. The data plane — answers, sync, and a local-first inbox
+## 5. The verb surface (15 verbs; the sweep's cuts applied)
 
-*(v3 of this section. v1 was display-merge — two read paths merged at print time. v2
-introduced a `pull` verb. v3 drops the verb: sync is an internal act of `inbox`/`resolve`,
-answers are a first-class pushed ledger, and `resolve` becomes a pure close.)*
+| Verb | Local mode | Linked |
+|---|---|---|
+| `init` | **zero flags.** Scaffolds `.figs/` (config `{agentId}`, charter template, CONTRACT, GUIDE, gitignore, empty ledgers). Never touches the network — structurally cannot need auth. Idempotent; never clobbers. Output states the instant value + both next paths | same (init is always local) |
+| `link` *(new)* | — | THE connector: bare = list your workspaces (needs token; **absorbs the deleted `workspaces` verb**); `--workspace <slug\|uuid>` + optional `--endpoint <url>` writes `endpoint` + `workspaceId` into config. **Verifies the workspace when a token is present; otherwise warns "unverified until first push."** Unlinking = delete the fields (documented; no verb) |
+| `report` / `checkpoint` | write + validate, exit 0 | + auto-push (exit table §3) |
+| `ask` | same; in local mode the closing line teaches: *"when your human answers (in chat), record it: `figs answer <id> --chosen '…' --by '<who>'`"* | same, plus "or they answer in the app" |
+| `answer` *(new)* | **agent-run** — transcribes the human's out-of-band answer verbatim (humans never type commands). `--chosen` (verbatim-checked) · `--text` · `--approve\|--request-changes\|--reject` · `--by` (required) · `--no-push`. Stamps `source: "chat"` itself (no flag). Ask must exist locally, else die. Taught rule: *record your human's words — never answer your own ask* | same; auto-push carries it to the app's thread |
+| `resolve` | **pure close, fully local.** Auto-cites the newest event for that ask, CLI-stamped (`resolution.answer`) — **no `--chosen`, no `--by`, no `--answer-id`** (all cut; see §6). Keeps `--note` · `--run <run-id>` · `--withdrawn` · `--rejected` · `--no-push`. No event on file: die with the teaching menu — *answered in chat? → `figs answer` first · retracted? → `--withdrawn` · declined? → `--rejected` · cleared on its own? → proceed with `--note` (recorded `via: "self"`)* | same + auto-push |
+| `inbox` | pure local read: in-flight jobs (`runs.jsonl`), open asks (`asks.jsonl`), threads (`answers.jsonl`) — grouped per ask, time-ordered, **no win-logic: complete transparent truth, the agent judges**. `inbox <ask-id>` = full detail + artifact restore | + the soft down-sync first (§7); `--no-sync` to skip |
+| `doctor` | **full conformance offline, exit 0** ("server validation skipped" note). Validates everything: charter placeholders, runs/asks/answers shapes, event ids, `resolution.run`/`run` refs, `--chosen`-vs-options. The spec's account-free reference validator | + server validate as a second opinion |
+| `push` | clear error: `not linked — figs link` (exit 1) | spine + artifacts + **answer events the server lacks**; version floor check lives here |
+| `status` | mode, files, journal honesty line ("records live on this machine") | + account, workspace |
+| `login` / `logout` | inherently connected; device flow unchanged; `login` when already logged in says so before replacing | — |
+| `version` | **prints locally, no network**; `--check` opts into the update check | same |
+| `help` | grouped **local / connected**; exit codes documented; `answer` described as "record your human's answer" | same |
 
-### The model: one transport up, one sync down, no new ritual
+**Cut in the final sweep** (each made the model stronger): the `workspaces` verb (= bare
+`link`'s empty-input behavior) · `init --workspace` and `init --endpoint` (init must be
+incapable of needing the network; endpoint is a connection property → `link`) ·
+`resolve --chosen/--by` (replaced by `answer`; if kept as fallback, agents' priors would skip
+`answer` forever and the ledger would stay empty) · `resolve --answer-id` (see §6) · the
+`--source` flag (field stays; flag was a spoofing surface).
 
-The two-ledger split makes sync **trivially conflict-free**: events are immutable records
-with ids minted **once, by whoever creates the event, never re-minted** — so both directions
-reduce to dedupe-by-id. The remote data plane is:
+**Considered and kept:** `report`/`checkpoint` as two verbs (the split IS the lifecycle
+teaching) · `--no-push` (batching) · `ask --stdin` (long prose vs shell quoting) ·
+`--to manager|builder` · the three verdict flags on `answer` (self-teaching) · `--trigger`
+(what set the sitting in motion → `session.trigger`) · `--unit` (which charter unit the work
+concerns) · `--period` (which time slice, e.g. `2025-11`).
 
-- **`figs push`** — up, the one transport (unchanged shape, one addition): the agent's spine,
-  referenced artifacts, **and `answers.jsonl`** — locally-recorded answer events the server
-  doesn't have yet (it stores them keyed by event id; idempotent). The app's thread stays
-  complete even when answers arrive out-of-band.
-- **Down-sync** — *not a verb*: an internal, soft, timeout-bounded act that `figs inbox` (and
-  `figs resolve`) run first when linked, scoped to **this agent's identity**:
-  - **Human events** → appended to `.figs/answers.jsonl` if the event id is absent locally.
-  - **The agent's own records raised on other machines** → appended home **only if the id is
-    entirely absent locally** (see the rulebook below — this condition is load-bearing).
-  - **Artifacts: never on a bare sync.** `figs inbox <ask-id>` restores that ask's full
-    handoff package — thread + hash-verified artifacts (today's behavior, kept; **the parked
-    `fetch` idea dies before birth**). Bare sync stays cheap JSON — roughly the same payload
-    today's `figs inbox` already fetches and throws away; we just stop discarding it.
-- Everything else is local. `login`/`logout`/`link`/`workspaces` are the control plane.
-  **You push your work up; your inbox brings their answers down. The rest never needs a server.**
+### When there's no `.figs/` here: peek, never use
 
-### The sync rulebook (every case, written down)
+No walk-up — **the fleet topology forbids it** (an openfigs fleet has the recruiter's `.figs`
+at the root and each employee's own `.figs` in its folder; walk-up would let an
+un-initialized subagent silently report as its parent: identity bleed). Instead the error
+peeks upward and informs: *"no `.figs/` here, but found one at `../..` (agent: Recruiter) —
+if you ARE that agent, cd there; if you're a different agent, run `figs init` at YOUR root."*
+The CLI never adopts a parent's identity; the smart agent gets the facts. GUIDE teaches:
+open agents at their own root; delegating means entering the agent's root.
 
-| # | Case | Rule |
-|---|------|------|
-| E1 | Server event id absent locally | append to `answers.jsonl` |
-| E2 | Server event id present locally | skip — events are immutable |
-| E3 | Locally-recorded event (`figs answer`) | pushed up; server stores by id; later syncs see the same id → E2. No dupes possible |
-| E4 | Human answered in the app *and* the agent transcribed a chat answer | two distinct events (two ids, two sources) on one ask — both kept; that's reality (two utterances). `resolve` cites the one acted on |
-| E5 | Correcting an answer | never edit/delete an event — a correction is a **new** event (humans correct themselves by answering again) |
-| R1 | Ask/run record exists only on server (raised on another machine) | sync appends the whole folded record home |
-| R2 | Ask/run record id exists locally **in any state** | **never re-append from the server.** Local wins; the server reconciles on next push (idempotent upsert). This is the rule that prevents a stale server copy from resurrecting a locally-closed ask via fold-ordering |
-| A1 | Referenced artifact absent locally | fetched on `inbox <ask-id>`, hash-verified |
-| A2 | Artifact present, identical bytes | skip (already shipped behavior) |
-| A3 | Artifact present, different bytes | leave untouched + warn (already shipped behavior) |
-| — | Ordering | ids are identity; `ts` is display order only. Threads render agent folds + human events interleaved by `ts` |
+---
 
-### `answers.jsonl` — why a separate file, not folds into `asks.jsonl`
+## 6. Ids: names vs plumbing (keystone #3)
 
-Considered folding answers into `asks.jsonl` and rejected it, for a sharper reason than tidiness:
+Two id classes with opposite designs:
 
-- **The two files have different algebra.** `asks.jsonl` holds *records that fold* —
-  field-level merge by id, latest wins; the close is one fold line. Answers are *events that
-  accumulate* — an ask can carry answer → changes-requested → approved, and every one must
-  survive. Folding events into a folding file forces an `events[]` array with append-merge
-  semantics — two merge rules in one file, complexity every implementer inherits.
-- **A split by content, not by author.** `asks.jsonl` holds the agent's claims;
-  `answers.jsonl` holds **human utterances** — sometimes minted by the app (authenticated),
-  sometimes transcribed by the agent (`figs answer`, below). Since the agent writes both
-  files locally, provenance lives in the event itself: the **`source`** field.
-- Cost acknowledged: one more file for implementers. Mitigated: it's optional, readers ignore
-  unknown files, and a pure-reporting implementation never touches it.
+- **Names** — job ids, ask ids, unit ids. **Agent-authored, meaningful, stable**
+  (`recon-acme-2026-11`); the runs list reads as a job list *because* agents name jobs.
+- **Plumbing** — event ids, the agent UUID, workspace UUIDs. **Machine-minted,
+  machine-cited. No command accepts one — enforcement by absence of surface.** `answer`
+  mints event ids; `resolve` auto-cites from disk; `init` mints the agent UUID; `push`
+  attaches it. **Contract rule: no new flag may ever accept an event id or UUID.** (Lives in
+  `CLAUDE.md` + `CONTRIBUTING.md`.)
 
-Event shape (lifted from SPEC's Reserved section, plus `source`):
-`{ "id": "evt-…", "ask": "<ask-id>", "kind": "answer" | "verdict", "by": "<who>", "ts": "…", "source": "app" | "chat" | …, "chosen"?: "<option verbatim>", "text"?: "…", "verdict"?: "approved" | "changes-requested" | "rejected" }`
+Why `--answer-id` died: the citation (`resolution.answer`) stays — it powers `via: "figs"`,
+the app's answer→close→job rendering — but the *override flag* defended only the
+"acted on a non-latest answer" edge, and when a later answer *contradicts* the one acted on,
+the right move is never "close anyway with a careful citation" — it's to address the
+contradiction. So: **resolve auto-cites the newest event for that ask, 100% CLI-stamped;
+nuance goes in `--note`.** Single citation (the decisive event); the full thread is in the
+record anyway. If multi-citation is ever needed, the spec's `artifact`/`artifacts`
+singular-shorthand pattern extends additively.
 
-**`source` is *where*, not *who*** — the answerer is always a human; `source` records the
-channel the answer arrived through: `"app"` = answered in Figs (server-minted, authenticated,
-the verified grade) · `"chat"` = told to the agent directly in its working session and
-transcribed by it (self-reported grade). Extensible additively (`slack`, `email`, …) without
-spec breakage. Minted once with the event, travels with it forever — push and sync never
-rewrite it.
+### Reference checks (every typed id, every command)
 
-### `figs answer` — the agent records its human's answer
+*Creatable ids announce; reference ids are checked; closes die, links warn.*
 
-**Run by the agent, like every other verb** — humans don't type commands. You answer in chat
-("approved, but only the 15 ready ones"); the agent transcribes that, verbatim, into the
-record:
+- **Creatable** (`report --id`, `checkpoint --id`, `ask --id`) — can't validate (new ids and
+  folds are both legitimate), so every write **announces which happened**: `new job opened:
+  <id>` vs `folded onto existing job <id>`. A typo meant as a continuation prints "new job"
+  and the agent catches itself.
+- **Reference** — checked against the journal (complete under the topology rule):
+  `resolve <ask-id>` / `answer <ask-id>` → must exist, else **die** ("not in this journal —
+  `figs inbox` shows your open asks") · `--run <run-id>` → unknown id **warns loudly**
+  ("typo? this link will dangle" — warn not die: a dangling link is damage-limited, a blocked
+  ask is not) · `--unit` → checked against the charter, warn · `--chosen` → verbatim-checked
+  with did-you-mean (shipped; the prototype for the pattern) · `inbox <ask-id>` → clear
+  not-found (shipped).
 
-`figs answer <ask-id>` — `--chosen '<option verbatim>'` (checked against the ask's options,
-same discipline as resolve) · `--text '…'` · `--approve | --request-changes | --reject` for
-sign-offs · `--by '<who answered>'` (required — attribution is the point) ·
-`--source` (defaults to `"chat"`).
+### Flag-naming rule
 
-It is **just another writing verb**: append to `answers.jsonl`, validate, auto-push — the
-same transport as report/ask/resolve. No special endpoint, no linked-mode special case
-(the earlier one-landing-zone POST design is dead; answers ride `figs push` like everything
-else, per the sync rulebook E3).
+Flags mirror the spec field they set (`--run` sets `run`, `--unit` sets `unit`); help text
+always shows the id placeholder (`--run <run-id>`). No exceptions remain (the one candidate,
+resolve's citation flag, was cut rather than renamed).
 
-Why record before resolving, instead of letting resolve carry it (today's flow)? **The answer
-becomes durable the moment it's given.** If the session dies between your answer and the
-finished work, the next session's inbox finds the answer on disk — you never repeat yourself.
+---
 
-The one taught rule (in the verb's help and llms.txt): **record your human's words — never
-answer your own ask.** Locally unenforceable (filesystem-trust, like everything local);
-linked, relayed events are visibly agent-pushed and `source`-marked.
+## 7. The data plane in detail
 
-### `figs resolve` — now a pure close
+### `answers.jsonl` — the human-utterance ledger
 
-Resolve sheds its hidden second job. Today it both closes the ask *and* fetches/records the
-answer evidence (a soft network re-fetch inside the verb). Now the evidence always already
-exists as an event in `answers.jsonl` — pulled down by sync, or transcribed by `figs answer`
-— and the ask-link exists the moment the event does (`ask: <id>` is in the event). So:
+Separate file, not folds into `asks.jsonl`, for a load-bearing reason: **the two files have
+different algebra.** Asks are *records that fold* (field-merge by id, latest wins); answers
+are *events that accumulate* (answer → changes-requested → approved must all survive).
+Folding events into a folding file forces two merge rules into one file — complexity every
+implementer inherits.
 
-- **Resolve means:** *"I acted on what was answered (or withdrew/acknowledged); this ask is
-  done."* One fold line: status + resolution.
-- It **cites the latest event from disk automatically** (`resolution.answer: <event-id>`,
-  `chosen`/`by` copied from the cited event for the folded record's readability;
-  `--answer <event-id>` to disambiguate when several exist). No `--chosen` retyping, no
-  network on the close path.
-- **`--run <job-id>` → `resolution.run`** *(new field)* — the job the agent did *because of*
-  the answer; the exact mirror of `ask.run` (the job an ask was born from). This hardens
-  what is free-text convention today (`--note 'job <id>'`) into a machine-readable link, and
-  it's how a manager sees **what happened between the answer and the close**: the cited
-  job's row carries its whole checkpoint trail (checkpoints are folds on the job id — the
-  trail comes free). Full rendered loop: ask → answer event → `resolution.run` → job →
-  checkpoints → outcome. Taught, not enforced: a resolve citing no job is itself
-  informative ("nothing real was done").
-- `--note` stays (the agent's one-line prose account); `--withdrawn` / `--rejected` stay
-  (the no-answer closes). `via` is derived: cited `source: "app"` event → `"figs"`; cited
-  transcribed event → `"human"`; no event → `"self"` or none, as today.
+Event shape (spec v2 §6.3):
+`{ "id": "evt-…", "ask": "<ask-id>", "kind": "answer" | "verdict", "by": "<who>", "ts": "…", "source": "app" | "chat", "chosen"?: "<option verbatim>", "text"?: "…", "verdict"?: "approved" | "changes-requested" | "rejected" }`
+
+- **`source` = *where*, not who** (always a human): `"app"` = answered in Figs
+  (server-minted) · `"chat"` = told to the agent in its session, transcribed (CLI-stamped; no
+  flag). Extensible additively (`slack`, `email`) when integrations exist.
+- **The trust rule (normative, spec v2):** readers derive the verified grade from **mint
+  origin** — an event the server minted is attested; an event pushed up from a machine is
+  transcription, whatever its fields say. `source` is display metadata, never trust input.
+- Events are immutable; a correction is a **new** event (humans correct themselves by
+  answering again).
+- **Multiple answers per ask are normal** (clarifications, corrections, changes-requested →
+  approved). The protocol's job is infra + transparency: inbox shows the whole thread per
+  ask, time-ordered — **no win-logic; the agent judges.**
+
+### Direction purity
+
+- **Up = `figs push`** (and every writing verb's auto-push): spine, referenced artifacts,
+  and answer events the server lacks (dedupe by id; server stores as relayed/transcribed).
+- **Down = `figs inbox`'s soft sync, answers only**: ~5s budget; on failure or an incomplete
+  response, **loud** ("showing local state — couldn't reach {endpoint}" / "sync incomplete")
+  and degrade to the local view. Never silent — a stale inbox claiming "nothing needs you" is
+  the product's worst failure mode. The server must return the complete open surface or flag
+  truncation (spec v2 §8). No cursors until scale demands.
+- Nothing else touches the network. `resolve` and `answer` are fully local; scripts wanting
+  machine-readable sync use `inbox --json`.
+
+### The full loop, one ritual, both modes
+
+ask → *(answer arrives — app or chat)* → synced down if app / `figs answer` if chat → act →
+real work reported under its own job id (`--trigger 'inbox: answer on <ask-id>'`) →
+`figs resolve <ask-id> --run <job-id>`. Back-and-forth works by construction: revisions fold
+on the same ask id; events accumulate; the thread interleaves by `ts`. Rejected stays sticky.
 
 ### Interconnections — ids and time, never pointers between same kinds
 
-The linkage rule, stated as law (it's true today by accident; keep it true by design):
-**chains emerge from ids + time; no record ever points at its own kind.** Asks never link
-asks, runs never link runs — every link is one hop, across kinds, so trees, cycles, and
-nesting are structurally impossible. The graph is bipartite with the **job as the hub**:
+**Chains emerge from ids + time; no record points at its own kind.** The graph is bipartite
+with the **job as the hub**: `ask.run` (the job an ask was born from) · `resolution.run` (the
+job an answer caused — *new field*, mirror of `ask.run`; how a manager sees what happened
+between answer and close: the job's row carries its whole checkpoint trail, since checkpoints
+are folds on the job id) · `event.ask` (the thread anchor) · `resolution.answer` (the cited
+decisive event, CLI-stamped) · `session.trigger` (the prose breadcrumb back). **Explicitly
+refused: `ask.parent`/`supersedes`** — follow-up needs chain through the job; the zero-work
+follow-up names the prior ask in `found` (convention). Additive later if dogfooding demands.
 
-- `ask.run` — the job an ask was born from (work → ask).
-- `resolution.run` — the job an answer caused (answer → work). *(new, above)*
-- `event.ask` — every human event keys to its ask; **the ask id IS the thread** — revisions
-  fold on the same id, events accumulate against it, display orders by `ts`. No chain
-  structure to maintain or corrupt.
-- `resolution.answer` — the event a close acted on (attribution by mechanism).
-- `session.trigger` — the human-readable breadcrumb the other way ("inbox: answer on
-  acme-bridge"); prose by design.
+### Crash tolerance (the journal must survive the agent dying)
 
-**Explicitly refused: an `ask.parent`/`supersedes` field.** A follow-up need discovered
-while acting on an answer chains *through the job* (prev ask → `resolution.run` → job →
-`ask.run` → new ask). The only unlinked case — a follow-up ask with zero work in between —
-is covered by convention (name the prior ask in `found`). If dogfooding shows bare
-ask-chains are common, a field can be added additively later; pointers are cheap to wait
-for and expensive to retract.
+Append isn't atomic — a process killed mid-write leaves a half line, which today bricks every
+verb until hand-repaired. Fix: **tolerate exactly one malformed final line** — shout ("last
+line of runs.jsonl is broken — likely a crash mid-write; skipped; re-report that record") and
+keep working; die loudly on malformed *interior* lines. Plus a re-check-before-append guard
+for concurrent same-machine sessions.
 
-**The full loop, both modes, one ritual:** ask → *(answer arrives — app or chat)* → record if
-chat (`figs answer`) / synced if app → act, report real work under its own job id →
-`figs resolve <ask-id>`. **Back-and-forth works by construction:** a changes-requested
-verdict → the agent revises and re-raises on the *same ask id* (a fold) → a new answer event →
-… Agent folds accumulate on the ask; human events accumulate in `answers.jsonl`; the thread
-is both, interleaved by `ts`. Rejected stays sticky/terminal as spec'd.
+### Files and verbs
 
-### `figs inbox` — local read + soft sync
-
-Inbox's read path is **100% local files**: in-flight jobs from `runs.jsonl`, open asks from
-`asks.jsonl`, threads from `answers.jsonl`. Local and linked mode share one implementation.
-
-**When linked, inbox runs the soft down-sync first** (timeout-bounded; on failure it degrades
-to the local view with a "showing local state — couldn't reach {endpoint}" warning). This is
-deliberate: the inbox's one job is "what needs me *now*?", and answers arrive precisely while
-the agent is away — a silently stale inbox saying "nothing needs you" is the worst failure
-mode the product can have, worse than a network touch. Agents get one session-start command
-that is simply correct. (`--no-sync` for the purists; there is no separate sync verb to
-ritualize or overuse.)
-
-**Education, in the tool not the docs:** in local mode, `figs ask`'s closing line becomes
-*"when your human answers (in chat), record it: `figs answer <id> --chosen '…' --by '<who>'`"*
-(today it says "answer in the app"). Inbox's next-move lines update the same way.
-
-**Honesty grade, stated plainly in docs:** `source: "chat"` events are transcription —
-the same self-reported grade as everything local. `source: "app"` events are authenticated,
-permission-gated, attributed by mechanism. *That delta is the pitch for linking — articulated,
-not enforced by crippling local mode.*
-
-**Spec impact:** additive, but `answers.jsonl` is now **wire format, not just local
-convention**: §6.3 defines the file + event shape (+`source`); §8's push payload gains
-`"answers": […]`; §8 also specs the down-sync contract (a GET for this agent's events +
-absent records; per-ask artifact restore) — delivery agent-pulled, exactly as Reserved
-already promises. No cursors/pagination until scale demands — sync moves the agent's open
-surface whole and dedupes by id; it's small by construction.
+Verbs cover the *streams* (report/checkpoint → runs · ask/resolve → asks · answer → answers).
+`agent.json` deliberately has **no verb**: it's a *document* (the charter, prose-rich) —
+agents edit files natively; `init` scaffolds the template, `doctor` refuses placeholders.
+Hand-writing any file stays *legal* (files are the protocol) — never *necessary*.
 
 ---
 
-## 6. Auth — review and redesign
+## 8. Auth — review and redesign
 
-**What's right (keep, it's ahead of most CLIs):** device flow where the agent never sees the
-token · pasted-token fallback for headless · `0600`/`0700` perms enforced on every save ·
-`FIGS_TOKEN` env override for CI · logout that names the server-side revocation step · the
-clean split *auth = the user, identity = the agent*.
+**Keep (ahead of most CLIs):** device flow where the agent never sees the token ·
+pasted-token fallback · `0600`/`0700` perms enforced on every save · `FIGS_TOKEN` for CI ·
+logout naming the server-side revocation step · the split *auth = the user, identity = the
+agent*.
 
 **Change:**
+1. **`Authorization: Bearer <token>`** replaces `x-figs-token`. App dual-accepts until the
+   next `MIN_CLI` bump.
+2. **Credentials keyed by endpoint origin** (`{ "https://app.figs.so": { "token": "…" }, … }`)
+   — fixes the real bug (prod token sent to whatever `FIGS_ENDPOINT` points at) and allows
+   prod + local dev side by side. **Migration:** key the old single token to the endpoint in
+   the nearest `config.json` when present, else the default; normalize origins (scheme, host,
+   port; no trailing slash).
+3. **`figs_…` token prefix** (app-side mint) — self-identifying, greppable, secret-scanning
+   ready.
+4. `figs link` is the auth-adjacent verb: verifies workspace access when a token exists;
+   warns "unverified until first push" otherwise.
 
-1. **`Authorization: Bearer <token>`** replaces the custom `x-figs-token` header. Standard;
-   proxies, WAFs, log scrubbers, and secret scanners all understand it. App accepts both until
-   the next `MIN_CLI` bump, then drops the custom header.
-2. **Credentials keyed by endpoint origin.** `~/.figs/credentials.json` becomes
-   `{ "https://app.figs.so": { "token": "…" }, "http://localhost:3000": { "token": "…" } }`.
-   Fixes the real bug (prod token sent to whatever `FIGS_ENDPOINT` points at) and allows
-   prod + local dev sessions side by side. Precedents: npm per-registry, `gh` hosts file,
-   docker config. Migration: on first read of the old single-token shape, rewrite keyed to the
-   default endpoint.
-3. **Token prefix `figs_…`** (app-side mint): self-identifying in logs, greppable, and
-   eligible for GitHub secret-scanning partnership later.
-4. **`figs login` when already logged in** should say so ("logged in as X — continuing will
-   replace this machine's token") instead of silently starting a new flow.
-
-**Deliberately NOT doing (over-engineering at this stage):** OAuth refresh tokens / expiry
-(long-lived revocable PATs are fine and simpler for agents) · OS keychain (files work headless;
-that's our world) · multi-profile/account switching (per-endpoint covers the real case) ·
-token scopes (park "push-only token for runner boxes" as reserved).
+**Deliberately not doing:** refresh tokens/expiry (long-lived revocable PATs are simpler for
+agents) · OS keychain (headless world) · multi-profile (per-endpoint covers it) · token
+scopes (parked: a push-only token for runner boxes).
 
 ---
 
-## 7. What local mode gives an agent instantly (say this everywhere)
+## 9. What local mode gives instantly (say this everywhere)
 
-One `figs init`, zero account, and the agent has:
+One zero-flag `figs init`, no account:
 
-- **An identity** — a stable UUID + a charter (`agent.json`): who it is, machine-readable.
-- **A work journal** — jobs under stable ids, fold-by-id progress, in-flight/settled
-  lifecycle. **Crash-recoverable memory across sessions:** the next session runs `figs inbox`
-  and finds what its past self left in flight. This is the killer local feature — agents die
-  constantly; the journal survives.
-- **A handoff record** — structured asks (options, details, attachments) + the resolve
-  discipline (cite what you acted on, verbatim). With `figs answer`: the full ask→answer→act
-  loop, asynchronous, on plain files.
-- **Validation that teaches** — `doctor` + validate-on-write, offline.
-- **A session ritual** — inbox to start, checkpoint as you go, report to settle. The shape of
-  a trustworthy employee, enforced by tooling.
-- **A costless exit ramp** — `figs link` later and *everything recorded since day one*
-  publishes (push sends the whole folded outbox). Nothing is lost by starting local. Say this
-  sentence verbatim in README/GUIDE — it's what makes "account optional" credible.
+- **Identity** — a stable UUID + the charter template.
+- **A work journal** — jobs under meaningful ids, fold-by-id progress, in-flight/settled
+  lifecycle, crash-tolerant file handling. **Crash-recoverable memory across sessions** on
+  this machine: the next session's `figs inbox` finds what its past self left in flight.
+- **The full handoff loop** — structured asks; answers recorded verbatim (`figs answer`);
+  closes that cite their evidence; the whole conversation greppable on disk.
+- **Validation that teaches** — `doctor` + validate-on-write + reference checks, offline.
+- **A session ritual** — inbox → checkpoint → report → resolve. The shape of a trustworthy
+  employee, enforced by tooling.
+- **A costless exit ramp** — `figs link` later and everything recorded since day one
+  publishes. Nothing is lost by starting local.
 
-It's a structured memory + reporting layer in greppable plain files. That's lots of value at
-zero cost — which is exactly what makes the funnel honest.
+Honesty lines that keep the claim trustworthy: the journal is **machine-local** (a fresh
+clone starts fresh; the app is the durable record humans see) · local records are
+self-reported (the verified grade is what linking adds).
 
 ---
 
-## 8. The 100/100 polish list (hygiene, alongside the redesign)
+## 10. Output + craft
 
-- `--json` on every read verb with one consistent envelope (`doctor` gets a unified one).
-- Exit-code semantics documented in README + `figs help`: `0` = recorded/valid · `1` = error
-  or declared intent unmet.
-- `figs help` groups commands by layer — **local** vs **connected** — teaching the model in
-  the help text itself. `figs answer` marked "run by your human".
-- stdout = data, stderr = warnings (mostly true today; sweep the stragglers).
-- Ship `GUIDE.md` in the npm package (`files[]`) so air-gapped agents have the full guide.
-- README quickstart flips: 30-second **no-signup** local quickstart first, then "see it in the
-  app" as the upgrade. (Better top-of-funnel too: "works before you sign up" is the strongest
-  devtool pitch there is.)
-- Scaffolded `.figs/.gitignore` comment explains the local-mode choice (see open question 3).
-
----
-
-## 9. Spec changes (`SPEC.md`, all within v1)
-
-- §1: add the principle by name — **Account-optional.** The protocol and the local tooling are
-  fully usable with no account or network; a reader/remote is strictly additive.
-- §3: `workspaceId` → **optional**. Absent = local mode (not yet linked). Required only to push.
-- §6.3 *(new)*: `answers.jsonl` — the human-utterance ledger; event shape lifted from
-  Reserved + the `source` field (*where* the answer arrived: `app` · `chat` · extensible).
-  Events are immutable, ids minted once. **Pushed** (it's wire format).
-- §6.2: `resolution.run` *(new optional field)* — the job the answer caused; mirror of
-  `ask.run`. Plus the linkage law in §1 or §6: ids + time, never same-kind pointers.
-- §8: wire auth = `Authorization: Bearer`; push payload gains `"answers": […]`; add the
-  **down-sync contract** beside push — a GET for this agent's events + locally-absent
-  records (and per-ask artifact restore), delivery agent-pulled as Reserved already promises.
-  The sync rulebook (§5) is normative: append-if-absent by id, local always wins.
-- §9: local validation is normative for conformance; server validation is optional.
-
-All additive/relaxing → stays `figs-spec v1`.
+- **`--json` envelope, defined before coding:** `{ ok, data, warnings: [] }` on every read
+  verb (status, inbox, doctor, version); warnings mirrored to stderr; `inbox --json` includes
+  sync status so a degraded sync is machine-detectable.
+- stdout = data, stderr = warnings/teaching (sweep the stragglers).
+- Exit codes per §3, documented in `figs help` and README.
+- Ship `GUIDE.md` in the npm package (`files[]`) for air-gapped agents.
+- README quickstart flips: 30-second **no-signup** local quickstart first; linking as the
+  upgrade, pitched **multiplayer/fleet first**.
+- The scaffolded `.figs/.gitignore` comment explains the machine-local journal choice.
+- **The no-account audit is a committed test script**, not a checklist: runs every verb with
+  credentials absent + endpoint unroutable, asserts the §3/§5 tables. Release blocks on it.
+  Test matrix additionally covers: linked/no-token, network-off, duplicate event ids,
+  truncated sync, crashed-tail recovery, peek-don't-use.
 
 ---
 
-## 10. Rollout order
+## 11. Spec changes — `figs-spec` v2
 
-1. **The state model** — optional `workspaceId`, `requireFigs` relaxation, `init`/`link`
-   split, state-aware push + exit codes. *(This alone makes the headline claim true.)*
-2. **`doctor` offline** + unified `--json`.
-3. **The data plane**: `answers.jsonl` + the soft down-sync inside inbox/resolve + inbox
-   rebuilt as a local read + `figs answer` + resolve-as-pure-close + push carrying answers;
-   SPEC §6.3 + §8. *(One step — the pieces only make sense together.)* App work in the same
-   step: ingest accepts `answers`, threads render relayed events by `source`.
-4. **Auth**: Bearer header, per-endpoint credentials (+ app dual-accept).
-5. **Docs flip**: README quickstart, GUIDE, llms.txt, help regrouping, exit-code docs.
-6. **Cross-repo follow-ups**: `create-openfigs` outro → `figs init` first, login later ·
-   `openfigs` template GUIDE wording · app: Bearer dual-accept, `figs_` token prefix,
-   llms.txt update.
+Two-way flow + sync is **not** additive to a spec whose v1 says "one-way; two-way reserved
+for a future version" — claiming v1 would make the governance look unserious (review
+finding, adopted). **v2 it is**, shipped with CLI 1.0.0:
 
-Every step updates the **no-account audit** in `CLAUDE.md` (the release gate).
+- §1 principles: add **Account-optional** (protocol + local tooling fully usable with no
+  account or network; a reader is strictly additive) and the **topology rule** (§4: one
+  agent = one repo = one machine is the supported write topology; ledgers up-only; answers
+  the sole two-way file).
+- §3 `config.json`: `workspaceId` *and* `endpoint` optional — absent = local mode; written
+  together by `link`.
+- §6.2 `Resolution`: add `run` (the job the answer caused); `answer` remains the cited
+  event id, now CLI-stamped.
+- §6.3 *(new)*: `answers.jsonl` — file, event shape, `source`, immutability, mint-once ids,
+  **the trust rule** (verified grade = mint origin; `source` is display only).
+- §8 wire: `Authorization: Bearer`; push payload gains `"answers": […]`; the down-sync GET
+  (answers only, complete-or-flag-truncation); the server regression guard (never walk a
+  closed/settled record backwards on push).
+- §9 validation: **local validation is normative** for conformance; server validation
+  optional.
+- Reserved: thread-event kinds `note`/`directive` stay reserved; provenance/signing stays
+  reserved; cursors/pagination named-deferred.
 
 ---
 
-## 11. Open questions (with recommendations)
+## 12. Rollout
 
-1. **`link` vs `connect` vs `remote` naming.** → **`link`** (Vercel/Supabase/Railway
-   precedent; agents have seen it; "remote" overloads git vocabulary without being git).
-2. **Ship the answer channel now or keep it reserved?** → **Ship in this redesign** (step 3).
-   We're at 0 users; it completes the local story, the event shape is already locked in
-   Reserved, and it's the difference between "local works" and "local is whole".
-   2b. ~~`pull` vs `fetch` vs `sync` naming~~ → **SETTLED: no sync verb at all.** Sync is an
-   internal act of `inbox`/`resolve`; `inbox <ask-id>` is the artifact door. The parked
-   `fetch` command is never built. (A public `pull` can be added later, purely additively,
-   if scripts/cron need bare sync.)
-   2c. ~~Auto-pull or explicit?~~ → **SETTLED by 2b:** the soft sync runs inside inbox —
-   one correct session-start command; `--no-sync` to skip. A stale inbox claiming "nothing
-   needs you" is the product's worst failure mode, so freshness wins over purity.
-3. **Local mode: commit the outbox or keep it gitignored?** In linked mode the outbox is
-   transient (remote is durable); in local mode the files ARE the record, surviving only on
-   that machine. → **Keep gitignored by default** (privacy-safe: runs/asks can carry sensitive
-   scope; committing should be a deliberate human act). Document the trade-off in the
-   scaffolded `.gitignore` comment so the choice is visible.
-4. ~~Should linked `figs answer` POST to the API?~~ → **SETTLED: neither — answers ride
-   `figs push`** like every other writing verb (one transport, no new endpoint, ids minted
-   once so sync-back dedupes). Decided 2026-06-12: locally-recorded answers DO push up, so
-   the app's thread stays complete even for out-of-band answers.
-5. **Keep `--no-push`?** → **Yes** — batching is orthogonal to mode (linked agents legitimately
-   batch mid-job and push once).
-6. **Dual-accept window for the old `x-figs-token` header?** → **Yes, briefly** — 0.8.0 is on
-   npm and `npx @latest` doesn't protect pinned installs; drop it at the next `MIN_CLI` bump.
-7. **Does local mode need a workspace concept at all (e.g. local org chart of several
-   agents)?** → **Not now.** One repo = one agent locally; fleet views are exactly what the
-   hosted app is for. Revisit only if real local-mode users ask.
+1. **State model + surface**: optional `workspaceId`/`endpoint`, `requireFigs` →
+   agentId-only, zero-flag `init`, new `link` (absorbs `workspaces`), exit codes 0/1/2,
+   peek-don't-use error, `version` offline, announce new-vs-fold, reference checks.
+2. **`doctor` offline + validation completeness** (incl. the new files/fields) + the
+   `--json` envelope everywhere.
+3. **The data plane** (one step — the pieces only work together): `answers.jsonl` +
+   `figs answer` + inbox local read + answers-only soft down-sync + resolve as pure local
+   close (auto-cite) + push carrying answers + crash tolerance. App work in the same step:
+   ingest accepts `answers`, the down-sync GET (complete-or-flag), the regression guard,
+   threads render `source`.
+4. **Auth**: Bearer (+ app dual-accept), per-endpoint credentials + migration, `figs_`
+   prefix, `link` verification.
+5. **The audit script + test matrix** (release gate live from here on).
+6. **Docs flip**: README (local-first quickstart, exit codes, multiplayer pitch), GUIDE,
+   llms.txt, help regrouping; SPEC v2 lands.
+7. **Cross-repo**: `create-openfigs` outro → `figs init` first, login later · `openfigs`
+   template GUIDE wording · HQ `docs/architecture.md` updated at ship (including one quiet
+   line that a conforming server is substitutable — known consequence, chosen knowingly, not
+   a public claim) · **delete this file**.
 
-## 12. Assumptions made
+---
 
-- **0 users** → breaking changes in CLI behavior, credentials file shape, and wire header are
-  free now and should all land in one wave (a single 0.9.0, or 1.0.0 if we want the redesign
-  to be the 1.0 story — recommend **1.0.0**: "local-first" is the right 1.0 claim).
-- The app's `/api/ingest`, `/api/validate`, `/api/inbox` contracts stay as-is apart from the
-  auth header; the answer-event POST is new app work scheduled with step 5.
-- Local-mode value is a goal in itself, not merely a funnel tactic — the README/GUIDE will be
-  written from that posture (per `concept.md`'s open-standard bet).
-- The Meridian demo fleet and our own dogfooding agents are linked already and unaffected
-  (optional `workspaceId` is a relaxation).
+## 13. Deferred (post-1.0, named so nothing repurposes them)
+
+- A public bare-sync verb (`pull`) — additive if scripts/cron ever need sync-without-display.
+- Sync cursors/pagination — when an agent's open surface stops fitting one response.
+- Multi-event citation (`resolution.answers[]`) — via the `artifact`/`artifacts` shorthand
+  pattern, if ever needed.
+- `source` values beyond `app`/`chat` — arrive with real integrations.
+- Token scopes (push-only runner tokens) · ask→ask links (only if dogfooding shows bare
+  follow-up chains are common) · relayed-answer display polish app-side.
+
+## 14. Assumptions
+
+- 0 users → one breaking wave: **CLI 1.0.0 + spec v2**, no compatibility shims beyond the
+  app's brief `x-figs-token` dual-accept and the credentials-file migration.
+- App contract changes are scoped to: Bearer dual-accept, ingest `answers`, the down-sync
+  GET, the regression guard, `figs_` token mint, thread rendering by `source`.
+- The Meridian demo fleet + dogfood agents are linked already; optional fields are a
+  relaxation — unaffected.
+- Local-mode value is a goal in itself, not merely a funnel tactic; docs are written from
+  that posture.

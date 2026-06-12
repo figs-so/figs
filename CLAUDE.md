@@ -11,10 +11,10 @@ The CLI must be a complete product **with zero account and zero network**. The h
 it *better* (verified answers, multiplayer, org chart) — never *possible*. Every change to
 `figs.mjs` or `SPEC.md` is audited against these rules:
 
-1. **Every verb except `login`/`logout`/`workspaces`/`link`/`push` must complete offline,
-   with no account, exit 0.** The only down-sync is the soft, degradable one inside
-   `inbox`/`resolve` when linked. Local data never requires a server round-trip (e.g.
-   in-flight jobs live in `runs.jsonl` — derive them there).
+1. **Every verb except `login`/`logout`/`link`/`push` must complete offline, with no
+   account, exit 0.** The only down-sync is the soft, degradable, answers-only one inside
+   `inbox` when linked — loud on failure or truncation, never silent. Local data never
+   requires a server round-trip (in-flight jobs live in `runs.jsonl` — derive them there).
 2. **A missing token or workspace is a *state*, not an error.** Error only when the repo's
    *declared intent* can't be met: `config.json` without `workspaceId` = deliberate local
    mode (calm note, exit 0); with `workspaceId` = the repo intends to publish (a failed push
@@ -28,6 +28,14 @@ it *better* (verified answers, multiplayer, org chart) — never *possible*. Eve
    anything a verb writes must be writable by hand and validate identically.
 6. **No network on the hot path of a local verb.** Version checks and remote merges live on
    connected verbs only, and degrade silently.
+7. **No flag may ever accept an event id or UUID.** Two id classes: *names* (job/ask/unit
+   ids — agent-authored, meaningful) and *plumbing* (event ids, agent/workspace UUIDs —
+   machine-minted, machine-cited). Plumbing never crosses an agent's keyboard; enforcement
+   is absence of surface. Creatable name-ids announce new-vs-fold on every write; reference
+   ids are checked against the journal (closes die, links warn).
+8. **The topology rule: one agent = one repo = one machine.** Agent ledgers (runs/asks) sync
+   UP only — never down; answers are the sole two-way file (immutable events, dedupe by id).
+   Never add a feature that shows another machine's in-flight work in a local inbox.
 
 **Release gate — the no-account audit:** before each release, run every verb in a fresh dir
 with no `~/.figs/credentials.json`, no `FIGS_TOKEN`, and network off. Each must match the

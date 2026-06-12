@@ -27,6 +27,12 @@ The baked default endpoint is `https://app.figs.so`.
 
 - Keep the CLI **zero-dependency** and the command surface **small** — we enrich the existing verbs rather
   than adding new ones.
+- **Local-first is a contract, not a preference** — every verb except `login`/`logout`/`link`/`push`
+  must work offline with no account (the full contract lives in `CLAUDE.md`; releases are gated on
+  the no-account audit).
+- **No flag may ever accept an event id or UUID.** Job/ask/unit ids are *names* — agent-authored and
+  meaningful. Event ids and UUIDs are *plumbing* — machine-minted and machine-cited; no command
+  exposes an input for them, and PRs must not add one.
 - Keep `SPEC.md` minimal and explicitly versioned.
 - Match the surrounding style; be kind in reviews and issues.
 
