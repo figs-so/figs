@@ -134,27 +134,31 @@ const COMMANDS = {
   ask: {
     args: "<type> --title <text> [options]",
     flags: [
-      "--id", "--title", "--need", "--found", "--option", "--detail", "--attach",
-      "--to", "--unit", "--run", "--stdin", "--no-push",
+      "--id", "--title", "--need", "--found", "--option", "--on-approve", "--detail",
+      "--attach", "--to", "--unit", "--run", "--stdin", "--no-push",
     ],
     desc: "raise an ask — one self-contained line in asks.jsonl, pushed so a human sees it",
     more: [
       "<type> = the answer contract: needs-decision (give me an answer) ·",
       "sign-off (give me a verdict) · fyi (no answer — a for-the-record note).",
-      "Make it self-contained — a future session with zero context (or another human)",
-      "must be able to act from this record alone: --found (what you saw), --need (what",
-      "you need), --option (repeatable; short, stable, quotable — answers cite one",
-      "verbatim), --detail 'Label=Value' (repeatable), --attach <file> (repeatable;",
-      "for sign-offs attach the exact content for review + a brief: what to do once",
-      "approved and what it requires).",
+      "Two strangers read every ask — a human deciding, a future session acting;",
+      "the record must carry everything both need: --found (what you saw), --need",
+      "(what you need), --option (repeatable; short, stable, quotable — answers cite",
+      "one verbatim; the option is the label, context goes in --found/--detail),",
+      "--detail 'Label=Value' (repeatable), --attach <file> (repeatable; a verdict",
+      "blesses what the ask carries — attach the exact content for review + a brief:",
+      "what to do once approved and what it requires).",
       "On a sign-off, --option entries are answer paths — the human's verdict can",
-      "cite one verbatim ('Approved — file the 15 ready charges').",
+      "cite one verbatim ('Approved — file the 15 ready charges') — and",
+      "--on-approve '<step>' (repeatable, ordered; sign-off only) states what",
+      "approval sets in motion: an approval authorizes exactly the steps you stated.",
+      "Flag anything irreversible in the step itself.",
       "--run <run-id> links the run this came out of — explicit id only (other",
       "sessions may report concurrently; `figs report` prints the id it wrote).",
       "--stdin reads a full JSON object instead of flags (long texts; attachments still via --attach).",
       "Single-quote prose values ('…') — double quotes let your shell eat $ amounts.",
     ],
-    eg: "figs ask sign-off --title 'Send 10 payment reminders' --attach ./previews.html --run recon-2026-06",
+    eg: "figs ask sign-off --title 'Send 10 payment reminders' --attach ./previews.html --on-approve 'Send the 10 reminder emails' --on-approve 'Mark the invoices chased' --run recon-2026-06",
   },
   inbox: {
     args: "[<ask-id>] [--json]",
@@ -345,6 +349,15 @@ function validateAsk(a) {
   checkEnum(issues, a, "to", TO_VALUES, label)
   if (a.options !== undefined && (!Array.isArray(a.options) || a.options.some((o) => typeof o !== "string"))) {
     issues.push(`${label}.options: must be an array of short, quotable strings`)
+  }
+  if (a.onApprove !== undefined) {
+    if (!Array.isArray(a.onApprove) || a.onApprove.some((s) => typeof s !== "string")) {
+      issues.push(`${label}.onApprove: must be an array of strings — the ordered steps approval sets in motion`)
+    } else if (a.type !== "sign-off") {
+      issues.push(
+        `${label}.onApprove: sign-off only — it is the approval contract; a ${a.type ?? "non-sign-off ask"} has no approval (the chosen option carries the next step)`,
+      )
+    }
   }
   if (a.details !== undefined && (!Array.isArray(a.details) || a.details.some((d) => !d || typeof d.l !== "string"))) {
     issues.push(`${label}.details: must be [{ "l": "Label", "v": "Value" }]`)
@@ -1082,7 +1095,12 @@ function nextMove(a) {
   if (last.kind === "verdict" && last.verdict === "changes_requested") {
     return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title '…' …`
   }
-  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen '…'`
+  if (last.chosen) {
+    // Pre-fill the cited option verbatim — the note is substance for --note, never for --chosen.
+    const note = last.text ? ` --note '…'` : ""
+    return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen '${last.chosen}'${note}`
+  }
+  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --note '…'`
 }
 
 /** Restore an ask's refs into artifacts/ — hash-verified; never clobbers. */
@@ -1366,6 +1384,13 @@ async function askCmd() {
       )
     }
   }
+  const onApprove = flagAll("--on-approve")
+  if (onApprove.length) ask.onApprove = onApprove
+  if (ask.onApprove?.length && ask.type !== "sign-off") {
+    die(
+      `--on-approve is the approval contract — sign-off only. A ${ask.type} has no approval; the chosen option carries the next step (put it in the --option text)`,
+    )
+  }
   const details = flagAll("--detail").map((d) => {
     const i = d.indexOf("=")
     if (i < 1) die(`--detail must be "Label=Value", got "${d}"`)
@@ -1388,11 +1413,17 @@ async function askCmd() {
       "figs: ! tip: a sign-off reviews best with attachments — the exact content to approve, plus a brief (what to do once approved + what it requires). Add --attach <file>",
     )
   }
+  if (ask.type === "sign-off" && !ask.onApprove?.length) {
+    console.warn(
+      "figs: ! tip: state what approval sets in motion — --on-approve '<step>' (repeatable, ordered); an approver shouldn't have to guess what approve causes",
+    )
+  }
   warnEatenDollar(
     ask.title,
     ask.found,
     ask.need,
     ask.options ?? [],
+    ask.onApprove ?? [],
     (ask.details ?? []).flatMap((d) => [d.l, d.v]),
   )
   const issues = validateAsk(ask)

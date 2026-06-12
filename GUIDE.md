@@ -149,7 +149,7 @@ current as your role changes. **Do not put an `id` here** — your identity UUID
 | `status` | | Free text — your current state (e.g. `"in_dev"`, `"healthy"`). |
 | `mandate` | | **Your charter** — one sentence: what you're accountable for. Shown loudest. |
 | `avatar` | | `{ "seed": "<string>" }` — seeds your avatar. |
-| `org` | | `{ "department": "..." }` — **`department` groups you into a column on the org chart.** |
+| `org` | | `{ "department": "..." }` — **`department` is how readers group you on the org chart.** |
 | `runtime` | | e.g. `"Claude Code"`. |
 | `cadence` | | e.g. `"Monthly"`, `"Quarterly"`. |
 | `steps` | | `string[]` — your **fixed, ordered procedure**, shown as a numbered list. Only if your work has one. |
@@ -307,9 +307,10 @@ transparency, not metering. `commit` gets `+dirty` when the tree has uncommitted
 
 ## `asks.jsonl` — what you need from a human
 
-Raise your hand when you're stuck. **Write every ask for a stranger** — assume the session that
-acts on the answer shares zero context with you (a future you, another machine, the human): the
-record must carry everything needed to act, on its own.
+Raise your hand when you're stuck. **Every ask is read by two strangers**: a human who
+*decides* from exactly what the record carries, and a future session (a fresh you, another
+machine) that *acts* from exactly what the record carries. Nothing else reaches either of them
+— so write the record to do all the work, for both readers, on its own.
 
 **The easy path:**
 
@@ -328,7 +329,12 @@ validated, pushed. `--run <run-id>` links the run this came out of — **the exp
 "the latest run" is never guessed). For long texts use `--stdin` with a JSON object. **For a `sign-off`, attach the exact content to approve** (the email bodies, the
 recipient list) **plus a brief** — what to do once approved and what it requires (creds, files,
 data freshness) — so the session that picks up the approval can verify and act from the record
-alone.
+alone. **And state what approval sets in motion** — `--on-approve '<step>'` (repeatable,
+ordered): the steps you'll take once approved, with anything irreversible flagged in the step
+itself (`--on-approve 'Post the 8 journal entries to SAP — reversible until month-close'`).
+**An approval authorizes exactly the steps you stated, in order** — a sign-off that doesn't say
+what approve causes is asking for a rubber stamp. Sign-off only: a *needs-decision* has no
+approval; there, each option carries its own next step.
 
 The line it writes (the hand-authored shape):
 
@@ -355,13 +361,22 @@ The line it writes (the hand-authored shape):
   *work* (decisions, sign-offs on output) · `"builder"` = the human who maintains *you* (you're
   broken, credentials, **self-edit/logic-change flags**). Omit it if genuinely either — readers
   will guess from the type, labeled as a guess.
-- Optional context (each renders only if present): `found`, `need`, `options[]`, `details[]`, `refs[]`.
-  Write `options[]` as **short, stable, quotable** strings — a future answer (and your own
-  `resolution.chosen`) references one *verbatim*. On a **sign-off**, options are **answer
-  paths**: qualified verdicts the human can cite alongside approve / request-changes
-  (`"Approved — file the 15 ready charges"` / `"Hold — wait for Capital Grille"`) — write them
-  so each one tells you exactly what to do next. An ask can also carry the same `session` block
-  as a run — useful, since asks mark the moments a human will want to trace.
+- Optional context — **each field is a contract with the reader**; include what the decision needs:
+  - `found` / `need` — the case you're making: what you saw, and exactly what you need back.
+  - `options[]` — candidate answers, **short, stable, quotable**: an answer (and your own
+    `resolution.chosen`) cites one *verbatim* — a paragraph can't be quoted back. **The option
+    is the label; the context lives in `found`/`details`**, never inside the option. On a
+    **sign-off**, options are **answer paths**: qualified verdicts the human can cite alongside
+    approve / request-changes (`"Approved — file the 15 ready charges"` / `"Hold — wait for
+    Capital Grille"`) — write each so it tells you exactly what to do next.
+  - `onApprove[]` — sign-off only: the ordered steps approval sets in motion — **an approval
+    authorizes exactly these stated steps** (see above).
+  - `details[]` — labelled facts the decision rests on (amount at risk, the deadline).
+  - `refs[]` (`--attach`) — the exact content under review: **a verdict blesses what the ask
+    carries** — approving unattached content is approving a description of it.
+
+  An ask can also carry the same `session` block as a run — useful, since asks mark the moments
+  a human will want to trace.
 - **You own the lifecycle — close it honestly.** The easy path:
 
   ```
@@ -408,10 +423,14 @@ machine): the full ask, the whole thread, and the ask's attached artifacts **res
 `.figs/artifacts/`** (hash-verified; a local file with different content is never clobbered).
 Read it, verify any prerequisites the ask stated, do the work, then close:
 
-- approved / answered → fork on what the answer unlocked: nothing left to do →
-  `figs resolve <ask-id>` right away; real work → do the job, `figs report` it under its own
-  id, then `figs resolve <ask-id> --note 'job <id>'`. Either way the close cites the event it
-  acted on (`via: "figs"`, automatic);
+- approved / answered → an answer can carry up to three parts — a verdict, a cited answer path,
+  and a note: **read them as one instruction.** A note that adjusts the *follow-on* ("approved —
+  cc finance too") folds into how you act; a note that changes the *approved content itself*
+  ("approved, but rewrite section 2") is a change request wearing an approve — revise and
+  re-raise on the same id rather than executing something nobody blessed. Then fork on what the
+  answer unlocked: nothing left to do → `figs resolve <ask-id>` right away; real work → do the
+  job, `figs report` it under its own id, then `figs resolve <ask-id> --note 'job <id>'`.
+  Either way the close cites the event it acted on (`via: "figs"`, automatic);
 - changes requested → revise, then re-raise **on the same id** (`figs ask <type> --id <ask-id> …`);
 - rejected → acknowledge with `figs resolve <ask-id> --rejected` (the human already closed it;
   this records your own account, citing their event).

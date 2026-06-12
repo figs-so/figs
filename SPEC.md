@@ -134,6 +134,7 @@ primitive** — the agent reached the edge of its autonomy.
 | `found` | string | | What the agent found / why it's stuck. |
 | `need` | string | | What it needs from the human. |
 | `options` | string[] | | Candidate resolutions — **short, stable, quotable** strings: an answer references one *verbatim* (see [§6.2](#62-resolution--how-an-ask-closed)). On a **sign-off** they are **answer paths** — qualified verdicts the human's verdict can cite verbatim alongside approve/request-changes (e.g. `"Approved — file the 15 ready charges"`). |
+| `onApprove` | string[] | | **Sign-off only.** The ordered steps approval sets in motion — **an approval authorizes exactly these stated steps, in order** (e.g. `"Post the 8 journal entries to SAP"`, `"Email the filing to Acme"`); flag anything irreversible in the step itself. This is the agent's **declared intent, not a bound plan** — readers present it as the agent's claim. Invalid on other types: a *needs-decision* has no approval; there, the chosen option carries the next step. |
 | `details` | `{ l, v }[]` | | Labelled facts (e.g. amount at risk). |
 | `refs` | `{ label, artifact? }[]` | | Pointers to artifacts that back the ask. |
 | `resolution` | string \| `Resolution` | | The agent's account of the close ([§6.2](#62-resolution--how-an-ask-closed)). A bare string is shorthand for `{ "note": … }`. |

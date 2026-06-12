@@ -11,7 +11,7 @@ import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -435,6 +435,8 @@ test("ask raises a self-contained ask linked to its run by explicit id", async (
       "--title", "Send 10 payment reminders",
       "--need", "Approve sending exactly these emails",
       "--option", "Send all 10", "--option", "Hold the two large ones",
+      "--on-approve", "Send the 10 reminder emails",
+      "--on-approve", "Mark the invoices chased in the ledger",
       "--detail", "Total overdue=$4,820",
       "--attach", join(repo, "previews.html"),
       "--to", "manager",
@@ -449,10 +451,47 @@ test("ask raises a self-contained ask linked to its run by explicit id", async (
   assert.equal(ask.status, "open")
   assert.equal(ask.run, "recon-1")
   assert.deepEqual(ask.options, ["Send all 10", "Hold the two large ones"])
+  assert.deepEqual(ask.onApprove, [
+    "Send the 10 reminder emails",
+    "Mark the invoices chased in the ledger",
+  ])
   assert.deepEqual(ask.details, [{ l: "Total overdue", v: "$4,820" }])
   assert.deepEqual(ask.refs, [{ label: "previews.html", artifact: "previews.html" }])
   assert.ok(mock.lastIngest.body.asks.find((a) => a.id === ask.id), "ask reached ingest")
   assert.doesNotMatch(r.out, /sign-off reviews best with attachments/, "no tip when attached")
+  assert.doesNotMatch(r.out, /state what approval sets in motion/, "no tip when stated")
+})
+
+test("ask --on-approve outside sign-off teaches the approval contract", async () => {
+  const repo = await pushableRepo()
+  const r = await run(
+    ["ask", "needs-decision", "--title", "Pick a rule", "--on-approve", "apply it"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 1)
+  assert.match(r.out, /sign-off only/)
+  assert.match(r.out, /chosen option carries the next step/)
+})
+
+test("ask sign-off without --on-approve tips the consequences", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "sign-off", "--title", "Approve thing", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /state what approval sets in motion/, "consequences tip expected")
+})
+
+test("doctor flags hand-written onApprove on a non-sign-off ask", async () => {
+  const repo = await pushableRepo()
+  appendFileSync(
+    join(repo, ".figs", "asks.jsonl"),
+    JSON.stringify({ id: "a-bad", type: "fyi", title: "note", onApprove: ["do x"] }) + "\n",
+  )
+  const r = await run(["doctor"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /onApprove: sign-off only/)
 })
 
 test("ask sign-off without attachments prints the execution-brief tip", async () => {
@@ -742,6 +781,43 @@ test("inbox renders a qualified verdict — verdict + chosen + note in one event
   assert.match(r.out, /approved by Sarah \(manager\)/)
   assert.match(r.out, /→ "Approved — file the 15" · "good catch on the duplicate"/)
   assert.match(r.out, /figs resolve ask-q --chosen 'Approved — file the 15'/)
+})
+
+test("inbox pre-fills --chosen with the cited option on answered asks", async () => {
+  // The one repeated E2E stumble: agents cited the NOTE text in --chosen. The
+  // next-command quotes the ACTUAL chosen option and routes the note to --note.
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.inbox.asks = [
+    inboxAsk({
+      id: "ask-d",
+      type: "needs-decision",
+      options: ["Strip the alpha prefix", "Use a mapping you provide"],
+      events: [
+        {
+          ...approval,
+          id: "ev-d-1",
+          kind: "answer",
+          verdict: null,
+          chosen: "Strip the alpha prefix",
+          text: "re-run November after",
+        },
+      ],
+    }),
+    inboxAsk({
+      id: "ask-t",
+      type: "needs-decision",
+      title: "Free-text question",
+      events: [
+        { ...approval, id: "ev-t-1", kind: "answer", verdict: null, chosen: null, text: "use UTC everywhere" },
+      ],
+    }),
+  ]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /figs resolve ask-d --chosen 'Strip the alpha prefix' --note '…'/)
+  assert.match(r.out, /figs resolve ask-t --note '…'/)
+  assert.doesNotMatch(r.out, /resolve ask-t --chosen/, "no --chosen placeholder for a text-only answer")
 })
 
 test("ask blocked teaches the merge into needs-decision", async () => {
