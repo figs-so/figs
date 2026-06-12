@@ -768,6 +768,30 @@ test("report --trigger lands in session.trigger and invents nothing else", async
   assert.deepEqual(lastLine(repo, "runs.jsonl").session, { trigger: "Wayne, in chat" })
 })
 
+test("settling a job with an open ask citing it teaches, never blocks", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/asks.jsonl"),
+    `{"id":"bridge-q","ts":"2026-06-12T10:00:00Z","type":"needs-decision","status":"open","title":"Bridge rule?","run":"recon-x"}\n` +
+      `{"id":"done-q","ts":"2026-06-12T10:00:00Z","type":"sign-off","status":"resolved","title":"Old one","run":"recon-x"}\n`,
+  )
+  const r = await run(["report", "--id", "recon-x", "--result", "done", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /✓ run recorded/, "teaching must not block the write")
+  assert.match(r.out, /1 open ask cites this job \(bridge-q\)/)
+  assert.match(r.out, /tail sign-off is fine/)
+  assert.match(r.out, /figs checkpoint --id recon-x --status warn/)
+  // a job nothing cites stays quiet
+  const quiet = await run(["report", "--id", "other-job", "--result", "ok", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.ok(!quiet.out.includes("open ask"), `no note expected: ${quiet.out}`)
+})
+
 test("push refuses a hand-written run with a bogus state (lifecycle is enum'd)", async () => {
   const repo = await pushableRepo()
   writeFileSync(

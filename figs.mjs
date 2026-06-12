@@ -1398,6 +1398,21 @@ async function reportCmd() {
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("runs.jsonl", run)
   console.log(`figs: ✓ run recorded — ${JSON.stringify(run)}`)
+  // Teaching, never a gate: a settled job with open asks citing it is the
+  // normal tail-of-job pattern (the ask owns the waiting) — but if the job's
+  // OUTCOME depends on an answer, in-flight is the honest state. Local fold
+  // only (other machines' asks are invisible here): best-effort by design.
+  const openCiting = foldById(readJsonl("asks.jsonl")).filter(
+    (a) => a.run === run.id && (a.status ?? "open") === "open",
+  )
+  if (openCiting.length > 0) {
+    const n = openCiting.length
+    console.log(
+      `figs:   note: ${n} open ask${n === 1 ? "" : "s"} cite${n === 1 ? "s" : ""} this job (${openCiting
+        .map((a) => a.id)
+        .join(", ")}) — a tail sign-off is fine; if the OUTCOME depends on an answer, keep the job in flight instead (\`figs checkpoint --id ${run.id} --status warn\`)`,
+    )
+  }
   await autoPush()
 }
 
