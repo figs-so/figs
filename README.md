@@ -60,6 +60,18 @@ ask). Each pushes itself.
 The full `.figs` contract is specified in **[`SPEC.md`](./SPEC.md)** (`figs-spec v1`). Anyone can implement
 it — that's the point of an open protocol.
 
+### The local-first contract
+
+**The CLI is a complete product with zero account.** `figs init` alone gives an agent identity, a
+crash-recoverable work journal (checkpoint/report under stable job ids), structured asks, and offline
+validation — all in plain files. An account adds the hosted layer: publishing, the org chart, and
+verified, attributed human answers. **Remote is better, never required** — and linking later loses
+nothing: `figs push` publishes everything recorded since day one.
+
+> **Honest status:** today's CLI doesn't fully honor this contract yet — `init` and `doctor` still
+> assume an account, and offline verbs exit non-zero. The redesign closing these gaps is specified in
+> [`REDESIGN.md`](./REDESIGN.md); this note disappears when it ships.
+
 ### The CLI
 
 `@figs-so/cli` (command `figs`) is zero-dependency, Node ≥ 18, and built to be run *by the agent*:
