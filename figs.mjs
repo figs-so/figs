@@ -111,15 +111,20 @@ const COMMANDS = {
   report: {
     args: "--result <text> [options]",
     flags: [
-      "--result", "--id", "--unit", "--period", "--status", "--attach", "--no-push",
+      "--result", "--id", "--unit", "--period", "--status", "--trigger", "--attach", "--no-push",
     ],
-    desc: "record a run — one job's row in runs.jsonl; stamps id/ts, pushes",
+    desc: "file a job's outcome — settles its row in runs.jsonl; stamps id/ts/state, pushes",
     more: [
       "One run = one JOB — a unit of work your manager would recognize; the runs",
       "list reads as the job list. Give a job a stable, meaningful --id",
       "(recon-acme-2026-11); reporting the same id again folds onto that job's row",
       "(progress evolves: blocked → ok). Sittings/sessions never mint runs —",
       "stopping to wait for a human is not a job.",
+      "A report SETTLES the job (state: settled). A job that outlives a sitting",
+      "should open with `figs checkpoint` first; a report with no prior checkpoint",
+      "is simply a job born settled (the single-sitting case).",
+      "--trigger '<what set this sitting in motion>' — state it in a fresh sitting",
+      "('monthly close cron', 'Wayne, in chat'); omit when continuing one.",
       "You supply the content; the CLI does the bookkeeping (id, real-clock ts,",
       "validation, artifact copy, push).",
       "Single-quote prose values ('…') — inside double quotes your shell expands $,",
@@ -130,6 +135,29 @@ const COMMANDS = {
       "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
     ],
     eg: "figs report --id recon-acme-2026-11 --result '88% matched · 31 flagged' --attach ./acme-2025-11.html",
+  },
+  checkpoint: {
+    args: "--id <job> --note <text> [options]",
+    flags: [
+      "--id", "--note", "--trigger", "--status", "--unit", "--period", "--attach", "--no-push",
+    ],
+    desc: "save a job's progress mid-flight — folds onto its row, marks it in-flight, pushes",
+    more: [
+      "Your first checkpoint OPENS the job (state: in-flight) — make it the first",
+      "act of any job that will outlive this sitting: say what triggered it",
+      "(--trigger) and what you're setting out to do (--note). If you die mid-job,",
+      "the checkpoint is what the next session finds in `figs inbox`; without one,",
+      "the job never existed anywhere.",
+      "Checkpoint at MANAGER grain — a step a human would recognize ('statements",
+      "pulled — matching now'), never per tool call.",
+      "--note is the job's current one-line state; it shows on the job's row and",
+      "evolves with each fold. --status still carries the outcome look (a stuck",
+      "job is --status warn — in-flight and warn are independent).",
+      "`figs report --id <same-id>` settles the job when it's done — including",
+      "abandoning it (--status warn --result 'abandoned — superseded by …').",
+      "A checkpoint isn't a checkpoint until it's pushed — this verb pushes itself.",
+    ],
+    eg: "figs checkpoint --id recon-acme-2026-11 --note 'Statements pulled — matching now' --trigger 'monthly close cron'",
   },
   ask: {
     args: "<type> --title <text> [options]",
@@ -170,8 +198,9 @@ const COMMANDS = {
       "With an ask id: the full handoff package — the ask, the whole thread, and its",
       "attached artifacts restored into .figs/artifacts/ (hash-verified) so a fresh",
       "session can act from the record alone.",
-      "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged.",
-      "Reads only — closing still happens via figs resolve.",
+      "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged",
+      "+ unfinished jobs (in-flight runs — your past self's work; finish or settle).",
+      "Reads only — closing still happens via figs resolve / figs report.",
     ],
     eg: "figs inbox",
   },
@@ -296,6 +325,9 @@ function genId(prefix) {
 // status, not an ask type; what you need from a human is a needs-decision.
 const ASK_TYPES = ["needs-decision", "sign-off", "fyi"]
 const RUN_STATUSES = ["ok", "warn", "fail"]
+// Lifecycle, orthogonal to status (outcome): checkpoint stamps in-flight,
+// report stamps settled. Absent = settled (a plain report is a complete fact).
+const RUN_STATES = ["in-flight", "settled"]
 const ASK_STATUSES = ["open", "resolved", "withdrawn", "rejected"]
 const TO_VALUES = ["manager", "builder"]
 const ARTIFACT_EXTS = new Set([
@@ -322,6 +354,7 @@ function validateRun(r) {
   if (!r.id || typeof r.id !== "string") issues.push(`${label}: missing required "id"`)
   if (!r.ts) issues.push(`${label}: missing required "ts" (ISO-8601 — \`figs report\` stamps it for you)`)
   checkEnum(issues, r, "status", RUN_STATUSES, label)
+  checkEnum(issues, r, "state", RUN_STATES, label)
   if (r.artifact !== undefined && typeof r.artifact !== "string") {
     issues.push(`${label}.artifact: must be a single file name (use "artifacts" for a list)`)
   }
@@ -522,6 +555,7 @@ else if (COMMANDS[cmd]) {
   else if (cmd === "workspaces") await workspaces()
   else if (cmd === "init") await init()
   else if (cmd === "report") await reportCmd()
+  else if (cmd === "checkpoint") await checkpointCmd()
   else if (cmd === "ask") await askCmd()
   else if (cmd === "inbox") await inboxCmd()
   else if (cmd === "resolve") await resolveCmd()
@@ -1199,15 +1233,17 @@ async function inboxCmd() {
   if (data.truncated) {
     console.warn(`figs: ! showing the first ${items.length} — more exist (close some asks)`)
   }
-  if (items.length === 0) {
-    console.log("figs: ✓ inbox empty — no open asks, nothing needs you")
+  const jobs = data.jobs ?? []
+  if (items.length === 0 && jobs.length === 0) {
+    console.log("figs: ✓ inbox empty — no open asks, no unfinished jobs, nothing needs you")
     return
   }
   const rejected = items.filter((a) => a.status === "rejected")
   const answered = items.filter((a) => a.status === "open" && a.events.length > 0)
   const quiet = items.filter((a) => a.status === "open" && a.events.length === 0)
   console.log(
-    `figs: inbox — ${answered.length} answered · ${rejected.length} rejected to acknowledge · ${quiet.length} waiting on your human`,
+    `figs: inbox — ${answered.length} answered · ${rejected.length} rejected to acknowledge · ${quiet.length} waiting on your human` +
+      (jobs.length ? ` · ${jobs.length} job${jobs.length === 1 ? "" : "s"} in flight` : ""),
   )
   const printItem = (a) => {
     const last = a.events[a.events.length - 1]
@@ -1219,6 +1255,17 @@ async function inboxCmd() {
   if (quiet.length) {
     console.log(`\n  Waiting on your human (nothing for you to do):`)
     for (const a of quiet) console.log(`    · ${a.id} · ${a.type} — ${a.title} (raised ${agoStr(a.ts)})`)
+  }
+  if (jobs.length) {
+    console.log(`\n  Unfinished jobs — in flight (your past self's work; finish or settle):`)
+    for (const j of jobs) {
+      console.log(
+        `    · ${j.id}${j.result ? ` — ${j.result}` : ""} (last update ${agoStr(j.updatedAt ?? j.ts)})`,
+      )
+      console.log(
+        `      → continue it (\`figs checkpoint --id ${j.id}\` as you go); \`figs report --id ${j.id}\` settles it`,
+      )
+    }
   }
 }
 
@@ -1332,13 +1379,17 @@ async function reportCmd() {
   if (!result) {
     die("report needs --result '<one-line outcome>' — e.g. figs report --result '88% matched · 31 flagged'")
   }
-  const run = { id: flag("--id") || genId("r"), ts: nowIso(), result }
+  // state is verb-stamped, never typed: report settles the job (checkpoint
+  // marks it in-flight). The settling fold overrides any earlier checkpoint.
+  const run = { id: flag("--id") || genId("r"), ts: nowIso(), result, state: "settled" }
   const unit = flag("--unit")
   if (unit) run.unit = unit
   const period = flag("--period")
   if (period) run.period = period
   const status = flag("--status")
   if (status) run.status = status
+  const trigger = flag("--trigger")
+  if (trigger) run.session = { trigger }
   const attached = attachFiles(flagAll("--attach"))
   if (attached.length === 1) run.artifact = attached[0]
   else if (attached.length > 1) run.artifacts = attached
@@ -1347,6 +1398,50 @@ async function reportCmd() {
   if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
   appendJsonl("runs.jsonl", run)
   console.log(`figs: ✓ run recorded — ${JSON.stringify(run)}`)
+  await autoPush()
+}
+
+/**
+ * `figs checkpoint` — save a job's progress so it survives this sitting. The
+ * first checkpoint on an id OPENS the job (state: in-flight); a crash mid-job
+ * then leaves a visible, recoverable stub the next session finds in
+ * `figs inbox`, instead of nothing. Same fold-by-id write as report — only
+ * the stamped state differs; `figs report` settles the id.
+ */
+async function checkpointCmd() {
+  requireFigs()
+  const id = flag("--id")
+  if (!id) {
+    die("checkpoint needs --id '<job-id>' — the stable job id the next session will look for (e.g. recon-acme-2026-11)")
+  }
+  const note = flag("--note")
+  if (!note) {
+    die(`checkpoint needs --note '<where the job stands>' — e.g. figs checkpoint --id ${id} --note 'Statements pulled — matching now'`)
+  }
+  // Before the append, so "new" means new-to-this-outbox (the teaching line).
+  const isNew = !foldById(readJsonl("runs.jsonl")).some((r) => r.id === id)
+  const run = { id, ts: nowIso(), result: note, state: "in-flight" }
+  const unit = flag("--unit")
+  if (unit) run.unit = unit
+  const period = flag("--period")
+  if (period) run.period = period
+  const status = flag("--status")
+  if (status) run.status = status
+  const trigger = flag("--trigger")
+  if (trigger) run.session = { trigger }
+  const attached = attachFiles(flagAll("--attach"))
+  if (attached.length === 1) run.artifact = attached[0]
+  else if (attached.length > 1) run.artifacts = attached
+  warnEatenDollar(run.result)
+  const issues = validateRun(run)
+  if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
+  appendJsonl("runs.jsonl", run)
+  console.log(`figs: ✓ checkpoint recorded — ${JSON.stringify(run)}`)
+  if (isNew) {
+    console.log(
+      `figs:   new job opened: ${id} (in flight) — checkpoint as you go; \`figs report --id ${id}\` settles it`,
+    )
+  }
   await autoPush()
 }
 

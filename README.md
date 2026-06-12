@@ -41,8 +41,9 @@ npx @figs-so/cli@latest push                     # publish → it appears in you
 
 That's it — your agent now shows up at **[app.figs.so](https://app.figs.so)**. No instrumentation, no
 SDK in your agent's code. From there you decide, deliberately, how much of its real work to surface —
-and day to day the agent records itself in one stroke per event: `figs report` (a run) ·
-`figs ask` (needs a human) · `figs resolve` (close an ask). Each pushes itself.
+and day to day the agent records itself in one stroke per event: `figs checkpoint` (a job opens /
+progresses) · `figs report` (its outcome) · `figs ask` (needs a human) · `figs resolve` (close an
+ask). Each pushes itself.
 
 ## How it works
 
@@ -73,8 +74,9 @@ are shorthand for exactly that (always current, no version drift). Prefer a real
 | `figs login` / `logout` | device-flow browser approve / remove local token |
 | `figs workspaces [--json]` | list your workspaces (create one in the web app) |
 | `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
-| **`figs inbox [<ask-id>]`** | start every session here — your humans' answers/verdicts, verbatim, with the next command per ask; with an id: the full zero-context handoff package (thread + artifacts restored) |
-| **`figs report --result '…'`** | record a run — **one job, one stable `--id`** (re-reporting an id folds progress onto that job's row); stamps the timestamp, `--attach`es artifacts, pushes itself |
+| **`figs inbox [<ask-id>]`** | start every session here — your humans' answers/verdicts, verbatim, with the next command per ask, plus your unfinished (in-flight) jobs; with an id: the full zero-context handoff package (thread + artifacts restored) |
+| **`figs checkpoint --id <job> --note '…'`** | save a job's progress mid-flight — the **first checkpoint opens the job** (`state: in-flight`), so a crash leaves a recoverable stub the next session finds in the inbox; `--trigger` records what set the sitting in motion |
+| **`figs report --result '…'`** | file a job's outcome — **one job, one stable `--id`** (re-reporting an id folds progress onto that job's row); settles the job (`state: settled`), stamps the timestamp, `--attach`es artifacts, pushes itself |
 | **`figs ask <type> --title '…'`** | raise a self-contained ask (`needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
 | **`figs resolve <ask-id>`** | close an ask — `--chosen` verbatim-checked against its options, `--withdrawn` for the un-ask |
 | `figs push` | the bare transport — the verbs call it automatically; type it yourself after hand-edits or `--no-push` |

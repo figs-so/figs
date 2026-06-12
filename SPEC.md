@@ -89,14 +89,22 @@ merge as asks): re-reporting a job's id layers progress onto its row (`status` e
 blocked-ish `warn` → `ok`) — sittings/sessions are agent plumbing and never mint records.
 Closing an ask is **not** a job: that's a `resolution` in `asks.jsonl` (§6), never a run.
 
+A job is either **in flight** or **settled** (`state`, below). A **checkpoint**
+(`figs checkpoint`) folds progress onto the job's id and marks it in-flight — the record
+survives the session working it, so a crash mid-job leaves a visible, recoverable stub
+instead of nothing. A **report** files the outcome and settles it; a report with no prior
+checkpoint is simply a job **born settled** (the single-sitting case). Nothing *external*
+ever closes a run — only the agent's own report settles its job.
+
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
 | `ts` | string (ISO-8601 w/ offset) | ✓ | When it ran, e.g. `2026-05-28T23:41:26Z`. |
 | `unit` | string | | The `Unit.id` this run is about. |
 | `period` | string | | |
-| `result` | string | | One-line outcome. |
-| `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. **Outcome, never lifecycle** — a run is a complete fact when reported; nothing "closes" a run. |
+| `result` | string | | The job's current one-line state — where it stands while in flight; the outcome once settled. |
+| `status` | `"ok"` \| `"warn"` \| `"fail"` | | Default `"ok"`. **Outcome, never lifecycle** — what the work looks like right now (a stuck job is `warn`); whether the job is *done* is `state`, the orthogonal dimension. |
+| `state` | `"in-flight"` \| `"settled"` | | Default `"settled"`. **Lifecycle, verb-stamped** — `figs checkpoint` stamps `in-flight`, `figs report` stamps `settled`; agents never hand-pick it. An in-flight job whose agent died stays visibly in flight — that's the point: the next session finds it in `figs inbox` and finishes or settles it. |
 | `artifacts` | string[] | | File names under `artifacts/` to attach. Singular `artifact` (string) remains valid shorthand for one — readers normalize to the array (same pattern as `resolution`'s bare-string shorthand). |
 | `session` | `Session` | | Where/how this ran (see [§5.1](#51-session--runtime-metadata-optional)). Optional, self-reported. |
 
@@ -104,9 +112,9 @@ Closing an ask is **not** a job: that's a `resolution` in `asks.jsonl` (§6), ne
 
 An optional, **self-reported** block describing the runtime session that produced a run (or raised an
 ask — see §6). Every field is optional — fill what your runtime exposes, omit the rest. This is
-*transparency, not attestation*: the values come from the runtime's own records — `figs report`
-captures them automatically; hand-authors copy what their runtime exposes. Cryptographic provenance
-remains [reserved](#reserved-not-in-v1).
+*transparency, not attestation*: the values come from the runtime's own records — hand-authored, or
+written by integrations that can copy provable values at work-time (the CLI never infers them).
+Cryptographic provenance remains [reserved](#reserved-not-in-v1).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -115,6 +123,7 @@ remains [reserved](#reserved-not-in-v1).
 | `sessionId` | string | The runtime's own session identifier. |
 | `startedAt` | string (ISO-8601 w/ offset) | When this job began (the record's `ts` is when it was reported). |
 | `commit` | string | The agent repo's HEAD at run time; append `+dirty` when the working tree had uncommitted changes, e.g. `1b68668+dirty`. |
+| `trigger` | string | What set this sitting in motion — one self-reported line, e.g. `monthly close cron`, `inbox: answer on acme-bridge`, `Wayne, in chat`. A *fresh* sitting on a job states it (stamped from `--trigger` on `figs checkpoint`/`report`); records continuing the same session omit it. The one mechanically verified trigger stays `resolution.answer` ([§6.2](#62-resolution--how-an-ask-closed)). |
 | `tokens` | `{ input?, output?, cacheRead?, cacheWrite? }` (numbers) | **Session totals at report time** — cumulative for the whole session, *not* per-job. Approximate by design (an interactive session may include unrelated chat). Readers may derive per-run deltas between consecutive runs sharing a `sessionId`. Include cache figures when available — in agentic sessions they often dominate real cost. |
 
 ## 6. `asks.jsonl` — handoffs to a human
@@ -284,8 +293,10 @@ Deliberately out of scope for v1, named here so implementers don't repurpose the
 ```
 
 ```jsonc
-// .figs/runs.jsonl   (one object per line)
-{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "artifact": "acme-2025-11.html",
+// .figs/runs.jsonl   (one object per line; records fold by id — the checkpoint opened the job, the report settled it)
+{ "id": "acme-2025-11", "ts": "2026-05-28T23:05:40Z", "unit": "acme", "period": "2025-11", "state": "in-flight", "result": "Statements pulled — matching now",
+  "session": { "runtime": "claude-code", "trigger": "monthly close cron" } }
+{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "state": "settled", "artifact": "acme-2025-11.html",
   "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "3fffcd97-d4f5-4b77-8243-8f450d7c9614",
     "startedAt": "2026-05-28T23:02:00Z", "commit": "1b68668",
     "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } } }

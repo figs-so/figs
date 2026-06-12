@@ -684,6 +684,91 @@ test("report does not cry wolf on intact $ amounts and normal numbers", async ()
   assert.ok(!r.out.includes("ate a"), `false positive: ${r.out}`)
 })
 
+// ---------- checkpoint / run state (lifecycle, verb-stamped) ---------------
+
+test("checkpoint opens a job in-flight — stamped ts, trigger in session, pushed", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  const r = await run(
+    [
+      "checkpoint", "--id", "recon-acme-2026-06",
+      "--note", "Statements pulled — matching now",
+      "--trigger", "monthly close cron",
+    ],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /✓ checkpoint recorded/)
+  assert.match(r.out, /new job opened: recon-acme-2026-06 \(in flight\)/)
+  assert.match(r.out, /figs report --id recon-acme-2026-06/, "teaches the settling verb")
+  const rec = lastLine(repo, "runs.jsonl")
+  assert.equal(rec.id, "recon-acme-2026-06")
+  assert.match(rec.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/)
+  assert.equal(rec.result, "Statements pulled — matching now")
+  assert.equal(rec.state, "in-flight")
+  assert.deepEqual(rec.session, { trigger: "monthly close cron" }, "trigger only — nothing inferred")
+  // a checkpoint isn't a checkpoint until it's pushed — the verb pushes itself
+  const pushed = mock.lastIngest.body.runs.find((x) => x.id === "recon-acme-2026-06")
+  assert.equal(pushed.state, "in-flight")
+})
+
+test("checkpoint requires --id and --note, teaching each fix", async () => {
+  const repo = await pushableRepo()
+  const noId = await run(["checkpoint", "--note", "working"], { cwd: repo, token: "t" })
+  assert.equal(noId.code, 1)
+  assert.match(noId.out, /needs --id/)
+  const noNote = await run(["checkpoint", "--id", "job-1"], { cwd: repo, token: "t" })
+  assert.equal(noNote.code, 1)
+  assert.match(noNote.out, /needs --note/)
+})
+
+test("a second checkpoint folds onto the job — no re-open line", async () => {
+  const repo = await pushableRepo()
+  await run(["checkpoint", "--id", "job-2", "--note", "step 1", "--no-push"], { cwd: repo, token: "t" })
+  const r = await run(["checkpoint", "--id", "job-2", "--note", "step 2", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.ok(!r.out.includes("new job opened"), "only the FIRST checkpoint opens the job")
+  assert.equal(lastLine(repo, "runs.jsonl").result, "step 2")
+})
+
+test("report settles the job a checkpoint opened (and is born settled without one)", async () => {
+  const repo = await pushableRepo()
+  await run(["checkpoint", "--id", "job-3", "--note", "underway", "--no-push"], { cwd: repo, token: "t" })
+  const settle = await run(["report", "--id", "job-3", "--result", "done", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(settle.code, 0, settle.out)
+  assert.equal(lastLine(repo, "runs.jsonl").state, "settled")
+  // single-shot path: a plain report is a job born settled
+  await run(["report", "--id", "job-4", "--result", "one sitting", "--no-push"], { cwd: repo, token: "t" })
+  assert.equal(lastLine(repo, "runs.jsonl").state, "settled")
+})
+
+test("report --trigger lands in session.trigger and invents nothing else", async () => {
+  const repo = await pushableRepo()
+  const r = await run(
+    ["report", "--id", "job-5", "--result", "done", "--trigger", "Wayne, in chat", "--no-push"],
+    { cwd: repo, token: "t" },
+  )
+  assert.equal(r.code, 0, r.out)
+  assert.deepEqual(lastLine(repo, "runs.jsonl").session, { trigger: "Wayne, in chat" })
+})
+
+test("push refuses a hand-written run with a bogus state (lifecycle is enum'd)", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(
+    join(repo, ".figs/runs.jsonl"),
+    `{"id":"bad-state","ts":"2026-06-10T00:00:00Z","result":"x","state":"open"}\n`,
+  )
+  const r = await run(["push"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /state: "open" isn't valid/)
+})
+
 test("resolve --rejected records the human's no (terminal close, via human)", async () => {
   const repo = await pushableRepo()
   writeFileSync(
@@ -859,6 +944,30 @@ test("inbox is empty-friendly and honest about truncation", async () => {
   mock.inbox.asks = [inboxAsk({ id: "a", events: [approval] })]
   const r = await run(["inbox"], { cwd: repo, token: "t" })
   assert.match(r.out, /more exist/)
+})
+
+test("inbox surfaces unfinished jobs — a crashed run resurfaces at session start", async () => {
+  resetInbox()
+  const repo = await pushableRepo()
+  mock.inbox.jobs = [
+    {
+      id: "recon-acme-2026-06",
+      result: "Statements pulled — matching now",
+      state: "in-flight",
+      ts: new Date(Date.now() - 2 * 86400000).toISOString(),
+      updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    },
+  ]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /1 job in flight/)
+  assert.match(r.out, /Unfinished jobs — in flight/)
+  assert.match(r.out, /recon-acme-2026-06 — Statements pulled — matching now \(last update 2d ago\)/)
+  assert.match(r.out, /figs report --id recon-acme-2026-06/, "the settling verb is the next move")
+  // jobs alone keep the inbox non-empty
+  mock.inbox.asks = []
+  const only = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.ok(!only.out.includes("inbox empty"), "an in-flight job is not an empty inbox")
 })
 
 test("inbox <id> prints the handoff package and restores refs (hash-verified)", async () => {

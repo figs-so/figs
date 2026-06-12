@@ -278,19 +278,44 @@ The line it writes (hand-author this shape if you're not using the verb):
 ```
 
 - `id` ✅ and `ts` ✅ (ISO-8601 with offset) are required. `status`: `ok | warn | fail` (default
-  `ok`) — that's the **outcome**, never a lifecycle: a run is a complete fact when reported;
-  nothing "closes" a run. One run = one job — pausing to wait for a human isn't a new run;
-  report what's true so far onto the same job id.
-- `unit` links to a unit `id`. `result` is the one-line outcome. `artifact` is a file in
-  `artifacts/` (`artifacts` — an array — for several).
+  `ok`) — that's the **outcome**, never a lifecycle: what the work looks like right now (a stuck
+  job is `warn`). Whether the job is *done* is `state` — see checkpoints, below. One run = one
+  job — pausing to wait for a human isn't a new run; report what's true so far onto the same job id.
+- `unit` links to a unit `id`. `result` is the job's current one-line state (the outcome, once
+  settled). `artifact` is a file in `artifacts/` (`artifacts` — an array — for several).
 - **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. **Never use
   a counter** for ids (two machines would silently fold over each other's runs) — content-derived
   (`acme-2025-11`) or generated, nothing sequential.
 
+### Checkpoints — open the job before you work it (`figs checkpoint`)
+
+A job that will outlive this sitting must exist **before** it's done: if you die mid-job
+(network, usage limit, a killed session) having reported nothing, the job never existed —
+nobody, including the next you, can see it was ever started. So:
+
+```
+figs checkpoint --id recon-acme-2026-11 --note 'Statements pulled — matching now' \
+  --trigger 'monthly close cron'
+```
+
+- **Your first checkpoint opens the job** (`state: "in-flight"`, stamped by the verb — you never
+  hand-pick state). Make it the first act of any multi-sitting job: say what triggered it and
+  what you're setting out to do.
+- **Checkpoint at manager grain** — a step a human would recognize ("statements pulled —
+  matching now"), never per tool call. Each checkpoint folds onto the job's row; `--note`
+  evolves the row's one-liner.
+- **A checkpoint isn't a checkpoint until it's pushed** — the verb pushes itself and exits
+  non-zero if the push failed (fix it: `figs push`). An unpushed checkpoint protects nothing.
+- **`figs report --id <same-id>` settles the job** (`state: "settled"`) — including abandoning
+  it (`--status warn --result 'abandoned — superseded by …'`). A report with no prior
+  checkpoint is simply a single-sitting job, born settled — the common case; nothing changes.
+- Unfinished (in-flight) jobs surface in **`figs inbox`** — your past self's work, handed to
+  you. Finish them or settle them; never leave them hanging silently.
+
 ### `session` — where this ran (optional; only if you can prove it)
 
 A `session` object on a run (or an ask) lets humans trace it: runtime, model, session id, repo
-commit, token cost. **The CLI does not write this block** — it used to infer one from the newest
+commit, token cost. **The CLI never infers this block** — it used to guess one from the newest
 transcript on the machine, and in nested/headless runs that stamped the *wrong* runtime and model:
 a fabricated audit line, worse than none. A trace must be **true or absent, never false**. Include
 it only when you can **copy provable values from your runtime's own records** (its transcript /
@@ -298,12 +323,19 @@ session metadata — never your memory, never a guess); otherwise leave it out e
 
 ```json
 "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "<uuid>",
-  "startedAt": "2026-05-28T23:02:00Z", "commit": "1b68668",
+  "startedAt": "2026-05-28T23:02:00Z", "commit": "1b68668", "trigger": "monthly close cron",
   "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } }
 ```
 
 `tokens` are **session totals at report time** — cumulative, not per-job; approximate
 transparency, not metering. `commit` gets `+dirty` when the tree has uncommitted changes.
+
+The one field the CLI *does* stamp here is **`trigger`** (from `--trigger` on
+`figs checkpoint` / `figs report`): one self-reported line on **what set this sitting in
+motion** — `'monthly close cron'`, `'inbox: answer on acme-bridge'`, `'Wayne, in chat'`.
+State it whenever a *fresh* sitting touches a job; omit it on records continuing the same
+session. It's your own statement (transparency, not attestation) — the one mechanically
+verified trigger stays the resolve flow's cited answer event.
 
 ## `asks.jsonl` — what you need from a human
 
@@ -411,10 +443,13 @@ The line it writes (the hand-authored shape):
 **Start every session with `figs inbox`.** Your humans answer your asks in the Figs app —
 answers, approvals, change requests, rejections — and the inbox is where you read them. It's a
 **pure read** (writes nothing): every ask of yours with thread activity, each with your humans'
-words **verbatim** and the exact next command.
+words **verbatim** and the exact next command — plus your **unfinished jobs** (in-flight runs):
+work a past sitting opened with `figs checkpoint` and never settled. That's your past self
+handing you work — a crashed session's job resurfaces here automatically. Finish it (checkpoint
+as you go) or settle it with `figs report`.
 
 ```
-figs inbox                 # the list: answered · rejected-to-acknowledge · still waiting
+figs inbox                 # the list: answered · rejected-to-acknowledge · still waiting · in flight
 figs inbox <ask-id>        # the handoff package for one ask
 ```
 
