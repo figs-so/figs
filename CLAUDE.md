@@ -11,9 +11,10 @@ The CLI must be a complete product **with zero account and zero network**. The h
 it *better* (verified answers, multiplayer, org chart) — never *possible*. Every change to
 `figs.mjs` or `SPEC.md` is audited against these rules:
 
-1. **Every verb except `login`/`logout`/`workspaces`/`push`/`link` (and `inbox`'s remote
-   merge) must complete offline, with no account, exit 0.** Local data never requires a
-   server round-trip (e.g. in-flight jobs live in `runs.jsonl` — derive them there).
+1. **Every verb except `login`/`logout`/`workspaces`/`link`/`push`/`pull` (and `inbox`'s
+   soft pull when linked) must complete offline, with no account, exit 0.** The data plane is
+   push/pull only; local data never requires a server round-trip (e.g. in-flight jobs live in
+   `runs.jsonl` — derive them there).
 2. **A missing token or workspace is a *state*, not an error.** Error only when the repo's
    *declared intent* can't be met: `config.json` without `workspaceId` = deliberate local
    mode (calm note, exit 0); with `workspaceId` = the repo intends to publish (a failed push
