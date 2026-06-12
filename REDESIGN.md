@@ -40,7 +40,8 @@ works as a product (git → GitHub):
 | `git init` | `figs init` | purely local, zero prerequisites, instant value |
 | `git remote add origin` | `figs link` *(new)* | connecting is a separate, later, optional act |
 | `git commit` | `figs report` / `checkpoint` / `ask` / `resolve` | recording works offline, always |
-| `git push` / `git pull` | `figs push` / `figs pull` | the whole data plane is two verbs; everything else is local |
+| `git push` | `figs push` | the one explicit outward act — now carries answers too |
+| `git pull` | *(inside `figs inbox`)* | sync is internal, soft, and happens where the data is used — agents get one correct session-start command, no separate ritual |
 | `git status` | `figs status` | local truth first, remote state when available |
 | GitHub PRs/reviews | the app's inbox + answers | the multiplayer layer is where the hosted product earns its keep |
 
@@ -88,9 +89,8 @@ warning fires only when linked (in local mode the local file *is* the protection
 |---|---|---|---|
 | `init` | **dies** | scaffolds fully, mints `agentId`, exit 0 | `--workspace` flag = init + link sugar |
 | `link` *(new)* | — | bare: lists workspaces (needs token); `--workspace <slug\|uuid>` sets it | same; slug resolution needs token, UUID doesn't |
-| `report` / `checkpoint` / `ask` / `resolve` | write then **exit 1** | write, exit 0, no push attempt | write + push; failure exit 1 |
-| `inbox` | **dies** | pure local read: in-flight jobs + open asks + `answers.jsonl` threads | same read + a soft pull first (§5) |
-| `pull` *(new)* | — | no-op note: `local mode — nothing to pull` | syncs human events + own cross-machine records; `pull <ask-id>` adds that ask's artifacts |
+| `report` / `checkpoint` / `ask` / `answer` / `resolve` | write then **exit 1** (`answer` doesn't exist) | write, exit 0, no push attempt | write + push; failure exit 1 |
+| `inbox` | **dies** | pure local read: in-flight jobs + open asks + `answers.jsonl` threads | soft down-sync first, then the same local read (§5); `inbox <ask-id>` restores artifacts |
 | `doctor` | local checks then **dies** | full conformance offline, exit 0 (`server validation skipped` note) | + server validate as a bonus layer |
 | `status` | works | works — shows `mode: local` and what linking adds | works |
 | `push` | fails "not logged in" | fails clearly: `not linked — run figs link` | requires token (correct today) |
@@ -111,34 +111,49 @@ Per-verb notes:
 
 ---
 
-## 5. The data plane — answers, pull, and a pure-local inbox
+## 5. The data plane — answers, sync, and a local-first inbox
 
-*(v2 of this section — upgraded from "inbox = local derivation + remote display-merge" to a
-real sync model after thinking it through. The display-merge design had two read paths merged
-at print time, re-fetched on every command, and left `resolve` re-fetching events it had
-already seen. The sync model below collapses all of that.)*
+*(v3 of this section. v1 was display-merge — two read paths merged at print time. v2
+introduced a `pull` verb. v3 drops the verb: sync is an internal act of `inbox`/`resolve`,
+answers are a first-class pushed ledger, and `resolve` becomes a pure close.)*
 
-### The model: two ledgers, two directions
+### The model: one transport up, one sync down, no new ritual
 
-The spec's two-ledger split (agents write `asks.jsonl`/`runs.jsonl`; humans answer on the
-other side) turns out to make sync **trivially conflict-free**: nobody ever writes the other
-side's file, and human events are immutable records with ids. So the entire remote data plane
-reduces to two verbs:
+The two-ledger split makes sync **trivially conflict-free**: events are immutable records
+with ids minted **once, by whoever creates the event, never re-minted** — so both directions
+reduce to dedupe-by-id. The remote data plane is:
 
-- **`figs push`** — up: the agent's spine + the artifacts it references. Unchanged.
-- **`figs pull [<ask-id>]`** *(new)* — down, scoped to **this agent's identity**:
-  - **Human events** (answers/verdicts) → appended to `.figs/answers.jsonl`, deduped by event
-    id. Idempotent by construction — events are immutable, so re-pulling can never conflict.
-  - **The agent's own records raised on other machines** (an ask raised by runner A, closed
-    from runner B) → appended home. This generalizes the "its own bytes coming home" logic
-    that `resolve` does ad-hoc today, and is round-trip-safe because push is an idempotent
-    upsert and records fold by id.
-  - **Artifacts: never on a bare pull.** `figs pull <ask-id>` restores that one ask's full
-    handoff package — thread + hash-verified artifacts (absorbing today's `inbox <ask-id>`
-    artifact restore **and the parked `fetch` idea, which dies before birth**). Bare pull
-    stays cheap JSON, always.
-- Everything else is local. `login`/`logout`/`link`/`workspaces` are the control plane
-  (setup, not data). **Data = push/pull; setup = login/link; the rest never needs a server.**
+- **`figs push`** — up, the one transport (unchanged shape, one addition): the agent's spine,
+  referenced artifacts, **and `answers.jsonl`** — locally-recorded answer events the server
+  doesn't have yet (it stores them keyed by event id; idempotent). The app's thread stays
+  complete even when answers arrive out-of-band.
+- **Down-sync** — *not a verb*: an internal, soft, timeout-bounded act that `figs inbox` (and
+  `figs resolve`) run first when linked, scoped to **this agent's identity**:
+  - **Human events** → appended to `.figs/answers.jsonl` if the event id is absent locally.
+  - **The agent's own records raised on other machines** → appended home **only if the id is
+    entirely absent locally** (see the rulebook below — this condition is load-bearing).
+  - **Artifacts: never on a bare sync.** `figs inbox <ask-id>` restores that ask's full
+    handoff package — thread + hash-verified artifacts (today's behavior, kept; **the parked
+    `fetch` idea dies before birth**). Bare sync stays cheap JSON — roughly the same payload
+    today's `figs inbox` already fetches and throws away; we just stop discarding it.
+- Everything else is local. `login`/`logout`/`link`/`workspaces` are the control plane.
+  **You push your work up; your inbox brings their answers down. The rest never needs a server.**
+
+### The sync rulebook (every case, written down)
+
+| # | Case | Rule |
+|---|------|------|
+| E1 | Server event id absent locally | append to `answers.jsonl` |
+| E2 | Server event id present locally | skip — events are immutable |
+| E3 | Locally-recorded event (`figs answer`) | pushed up; server stores by id; later syncs see the same id → E2. No dupes possible |
+| E4 | Human answered in the app *and* the agent transcribed a chat answer | two distinct events (two ids, two sources) on one ask — both kept; that's reality (two utterances). `resolve` cites the one acted on |
+| E5 | Correcting an answer | never edit/delete an event — a correction is a **new** event (humans correct themselves by answering again) |
+| R1 | Ask/run record exists only on server (raised on another machine) | sync appends the whole folded record home |
+| R2 | Ask/run record id exists locally **in any state** | **never re-append from the server.** Local wins; the server reconciles on next push (idempotent upsert). This is the rule that prevents a stale server copy from resurrecting a locally-closed ask via fold-ordering |
+| A1 | Referenced artifact absent locally | fetched on `inbox <ask-id>`, hash-verified |
+| A2 | Artifact present, identical bytes | skip (already shipped behavior) |
+| A3 | Artifact present, different bytes | leave untouched + warn (already shipped behavior) |
+| — | Ordering | ids are identity; `ts` is display order only. Threads render agent folds + human events interleaved by `ts` |
 
 ### `answers.jsonl` — why a separate file, not folds into `asks.jsonl`
 
@@ -149,56 +164,100 @@ Considered folding answers into `asks.jsonl` and rejected it, for a sharper reas
   accumulate* — an ask can carry answer → changes-requested → approved, and every one must
   survive. Folding events into a folding file forces an `events[]` array with append-merge
   semantics — two merge rules in one file, complexity every implementer inherits.
-- **Provenance by location.** Anything in `asks.jsonl` is the agent's claim; anything in
-  `answers.jsonl` is human-side. Structural, auditable without trusting fields — and it keeps
-  SPEC §6.1's "nobody writes into the other side's ledger" literally true on disk.
+- **A split by content, not by author.** `asks.jsonl` holds the agent's claims;
+  `answers.jsonl` holds **human utterances** — sometimes minted by the app (authenticated),
+  sometimes transcribed by the agent (`figs answer`, below). Since the agent writes both
+  files locally, provenance lives in the event itself: the **`source`** field.
 - Cost acknowledged: one more file for implementers. Mitigated: it's optional, readers ignore
   unknown files, and a pure-reporting implementation never touches it.
 
-Event shape (lifted verbatim from SPEC's Reserved section — one shape, two homes):
-`{ "id": "evt-…", "ask": "<ask-id>", "kind": "answer" | "verdict", "by": "<who>", "ts": "…", "chosen"?: "<option verbatim>", "text"?: "…", "verdict"?: "approved" | "changes-requested" | "rejected" }`
+Event shape (lifted from SPEC's Reserved section, plus `source`):
+`{ "id": "evt-…", "ask": "<ask-id>", "kind": "answer" | "verdict", "by": "<who>", "ts": "…", "source": "app" | "chat" | …, "chosen"?: "<option verbatim>", "text"?: "…", "verdict"?: "approved" | "changes-requested" | "rejected" }`
 
-### `figs answer` — the human-run verb (one landing zone)
+**`source` is *where*, not *who*** — the answerer is always a human; `source` records the
+channel the answer arrived through: `"app"` = answered in Figs (server-minted, authenticated,
+the verified grade) · `"chat"` = told to the agent directly in its working session and
+transcribed by it (self-reported grade). Extensible additively (`slack`, `email`, …) without
+spec breakage. Minted once with the event, travels with it forever — push and sync never
+rewrite it.
 
-`figs answer <ask-id>` — `--chosen '<option verbatim>'` (checked against the ask's options) ·
-`--text '…'` · `--approve | --request-changes | --reject` for sign-offs · `--by` (defaults to
-`$USER`). Help marks it **"run by your human, not you"** — agents learn no new writing verb.
+### `figs answer` — the agent records its human's answer
 
-- **Local mode:** appends the event to `answers.jsonl`.
-- **Linked mode:** posts to the API (the machine token attributes the human), then records the
-  **server-minted event id** locally in `answers.jsonl`. One landing zone either way — a later
-  pull finds the id already present and dedupes. No dual-id drift possible.
+**Run by the agent, like every other verb** — humans don't type commands. You answer in chat
+("approved, but only the 15 ready ones"); the agent transcribes that, verbatim, into the
+record:
+
+`figs answer <ask-id>` — `--chosen '<option verbatim>'` (checked against the ask's options,
+same discipline as resolve) · `--text '…'` · `--approve | --request-changes | --reject` for
+sign-offs · `--by '<who answered>'` (required — attribution is the point) ·
+`--source` (defaults to `"chat"`).
+
+It is **just another writing verb**: append to `answers.jsonl`, validate, auto-push — the
+same transport as report/ask/resolve. No special endpoint, no linked-mode special case
+(the earlier one-landing-zone POST design is dead; answers ride `figs push` like everything
+else, per the sync rulebook E3).
+
+Why record before resolving, instead of letting resolve carry it (today's flow)? **The answer
+becomes durable the moment it's given.** If the session dies between your answer and the
+finished work, the next session's inbox finds the answer on disk — you never repeat yourself.
+
+The one taught rule (in the verb's help and llms.txt): **record your human's words — never
+answer your own ask.** Locally unenforceable (filesystem-trust, like everything local);
+linked, relayed events are visibly agent-pushed and `source`-marked.
+
+### `figs resolve` — now a pure close
+
+Resolve sheds its hidden second job. Today it both closes the ask *and* fetches/records the
+answer evidence (a soft network re-fetch inside the verb). Now the evidence always already
+exists as an event in `answers.jsonl` — pulled down by sync, or transcribed by `figs answer`
+— and the ask-link exists the moment the event does (`ask: <id>` is in the event). So:
+
+- **Resolve means:** *"I acted on what was answered (or withdrew/acknowledged); this ask is
+  done."* One fold line: status + resolution.
+- It **cites the latest event from disk automatically** (`resolution.answer: <event-id>`,
+  `chosen`/`by` copied from the cited event for the folded record's readability;
+  `--answer <event-id>` to disambiguate when several exist). No `--chosen` retyping, no
+  network on the close path.
+- `--note` stays (the agent's one-line account, citing the job id of work done);
+  `--withdrawn` / `--rejected` stay (the no-answer closes). `via` is derived: cited
+  `source: "app"` event → `"figs"`; cited transcribed event → `"human"`; no event → `"self"`
+  or none, as today.
+
+**The full loop, both modes, one ritual:** ask → *(answer arrives — app or chat)* → record if
+chat (`figs answer`) / synced if app → act, report real work under its own job id →
+`figs resolve <ask-id>`. **Back-and-forth works by construction:** a changes-requested
+verdict → the agent revises and re-raises on the *same ask id* (a fold) → a new answer event →
+… Agent folds accumulate on the ask; human events accumulate in `answers.jsonl`; the thread
+is both, interleaved by `ts`. Rejected stays sticky/terminal as spec'd.
+
+### `figs inbox` — local read + soft sync
+
+Inbox's read path is **100% local files**: in-flight jobs from `runs.jsonl`, open asks from
+`asks.jsonl`, threads from `answers.jsonl`. Local and linked mode share one implementation.
+
+**When linked, inbox runs the soft down-sync first** (timeout-bounded; on failure it degrades
+to the local view with a "showing local state — couldn't reach {endpoint}" warning). This is
+deliberate: the inbox's one job is "what needs me *now*?", and answers arrive precisely while
+the agent is away — a silently stale inbox saying "nothing needs you" is the worst failure
+mode the product can have, worse than a network touch. Agents get one session-start command
+that is simply correct. (`--no-sync` for the purists; there is no separate sync verb to
+ritualize or overuse.)
 
 **Education, in the tool not the docs:** in local mode, `figs ask`'s closing line becomes
-"your human answers with `figs answer <id> --chosen '…'`" (today it says "in the app"). The
-human learns the command from the ask itself.
+*"when your human answers (in chat), record it: `figs answer <id> --chosen '…' --by '<who>'`"*
+(today it says "answer in the app"). Inbox's next-move lines update the same way.
 
-### `figs inbox` — pure local read (+ one deliberate impurity)
+**Honesty grade, stated plainly in docs:** `source: "chat"` events are transcription —
+the same self-reported grade as everything local. `source: "app"` events are authenticated,
+permission-gated, attributed by mechanism. *That delta is the pitch for linking — articulated,
+not enforced by crippling local mode.*
 
-Inbox's read path is now **100% local files**: in-flight jobs from `runs.jsonl`, open asks
-from `asks.jsonl`, threads from `answers.jsonl`. Local and linked mode share one
-implementation. `figs resolve` reads the cited event from `answers.jsonl` instead of
-re-fetching — offline-capable after a pull, and the record it cites exists on disk forever.
-
-**The deliberate impurity: when linked, `figs inbox` runs a soft pull first** (timeout-bounded;
-on failure it degrades to the local view with a "showing local state — couldn't reach
-{endpoint}" warning). This is a considered trade against purity: the inbox's one job is "what
-needs me *now*?", and answers arrive precisely while the agent is away — a silently stale
-inbox that says "nothing needs you" is the worst failure mode the product can have, worse than
-a network touch. Agents get one session-start command that is simply correct. Purists can
-`figs inbox --no-pull`; `figs pull` exists for explicit refresh.
-
-**Honesty grade, stated plainly in docs:** local answers are filesystem-trust — the same
-self-reported grade as everything local. Linked answers are authenticated, permission-gated,
-and attributed by mechanism. *That delta is the pitch for linking — articulated, not enforced
-by crippling local mode.*
-
-**Spec impact:** additive. `answers.jsonl` ships as §6.3 within v1 (optional file; readers
-must ignore files the spec doesn't name, so nothing breaks). `push` never publishes
-`answers.jsonl` — the server already has the authoritative human ledger; pull is how the two
-reconcile. The pull contract (a GET for this agent's events + records) is spec'd in §8
-alongside push. No cursors/pagination until scale demands — pull fetches the agent's open
-surface whole and dedupes locally; it's small by construction.
+**Spec impact:** additive, but `answers.jsonl` is now **wire format, not just local
+convention**: §6.3 defines the file + event shape (+`source`); §8's push payload gains
+`"answers": […]`; §8 also specs the down-sync contract (a GET for this agent's events +
+absent records; per-ask artifact restore) — delivery agent-pulled, exactly as Reserved
+already promises. No cursors/pagination until scale demands — sync moves the agent's open
+surface whole and dedupes by id; it's small by construction.
 
 ---
 
@@ -277,11 +336,13 @@ zero cost — which is exactly what makes the funnel honest.
 - §1: add the principle by name — **Account-optional.** The protocol and the local tooling are
   fully usable with no account or network; a reader/remote is strictly additive.
 - §3: `workspaceId` → **optional**. Absent = local mode (not yet linked). Required only to push.
-- §6.3 *(new)*: `answers.jsonl` — the local human ledger; event shape lifted from Reserved
-  (answer/verdict). Never pushed. Readers ignore it (it's agent-side input, not published state).
-- §8: wire auth = `Authorization: Bearer`; add the **pull contract** beside push — a GET for
-  this agent's human events + own records (and per-ask artifact restore), delivery
-  agent-pulled as Reserved already promises.
+- §6.3 *(new)*: `answers.jsonl` — the human-utterance ledger; event shape lifted from
+  Reserved + the `source` field (*where* the answer arrived: `app` · `chat` · extensible).
+  Events are immutable, ids minted once. **Pushed** (it's wire format).
+- §8: wire auth = `Authorization: Bearer`; push payload gains `"answers": […]`; add the
+  **down-sync contract** beside push — a GET for this agent's events + locally-absent
+  records (and per-ask artifact restore), delivery agent-pulled as Reserved already promises.
+  The sync rulebook (§5) is normative: append-if-absent by id, local always wins.
 - §9: local validation is normative for conformance; server validation is optional.
 
 All additive/relaxing → stays `figs-spec v1`.
@@ -293,15 +354,15 @@ All additive/relaxing → stays `figs-spec v1`.
 1. **The state model** — optional `workspaceId`, `requireFigs` relaxation, `init`/`link`
    split, state-aware push + exit codes. *(This alone makes the headline claim true.)*
 2. **`doctor` offline** + unified `--json`.
-3. **The data plane**: `answers.jsonl` + `figs pull` + inbox rebuilt as a pure local read
-   (with the linked soft pull); `resolve` switches to reading local events; SPEC §6.3 + §8
-   pull contract. *(One step, not three — the pieces only make sense together.)*
+3. **The data plane**: `answers.jsonl` + the soft down-sync inside inbox/resolve + inbox
+   rebuilt as a local read + `figs answer` + resolve-as-pure-close + push carrying answers;
+   SPEC §6.3 + §8. *(One step — the pieces only make sense together.)* App work in the same
+   step: ingest accepts `answers`, threads render relayed events by `source`.
 4. **Auth**: Bearer header, per-endpoint credentials (+ app dual-accept).
-5. **`figs answer`** (human verb): local append; linked POST + the app's answer-event endpoint.
-6. **Docs flip**: README quickstart, GUIDE, llms.txt, help regrouping, exit-code docs.
-7. **Cross-repo follow-ups**: `create-openfigs` outro → `figs init` first, login later ·
+5. **Docs flip**: README quickstart, GUIDE, llms.txt, help regrouping, exit-code docs.
+6. **Cross-repo follow-ups**: `create-openfigs` outro → `figs init` first, login later ·
    `openfigs` template GUIDE wording · app: Bearer dual-accept, `figs_` token prefix,
-   llms.txt update, eventually answer-event POST endpoint for linked `figs answer`.
+   llms.txt update.
 
 Every step updates the **no-account audit** in `CLAUDE.md` (the release gate).
 
@@ -311,27 +372,25 @@ Every step updates the **no-account audit** in `CLAUDE.md` (the release gate).
 
 1. **`link` vs `connect` vs `remote` naming.** → **`link`** (Vercel/Supabase/Railway
    precedent; agents have seen it; "remote" overloads git vocabulary without being git).
-2. **Ship the answer channel now or keep it reserved?** → **Ship in this redesign** (steps
-   3 + 5). We're at 0 users; it completes the local story, the event shape is already locked
-   in Reserved, and it's the difference between "local works" and "local is whole". Risk is
-   spec surface — mitigated by it being an unpushed, ignorable file.
-   2b. **`pull` vs `fetch` vs `sync` naming.** → **`pull`** — it's directional (down) and
-   git-native; `sync` implies bidirectional; `fetch`'s git meaning (download *without*
-   integrating) is exactly what ours isn't. The parked `fetch` command is absorbed by
-   `pull <ask-id>` and never gets built.
-   2c. **Should inbox auto-pull (the impurity) or require `figs pull` first?** → **Auto-pull,
-   soft.** A stale inbox claiming "nothing needs you" is the product's worst failure mode;
-   agents need one session-start command that's correct. `--no-pull` for purists. (This is
-   `git status` *not* auto-fetching — deliberately inverted, because agents forget rituals
-   and humans don't.)
+2. **Ship the answer channel now or keep it reserved?** → **Ship in this redesign** (step 3).
+   We're at 0 users; it completes the local story, the event shape is already locked in
+   Reserved, and it's the difference between "local works" and "local is whole".
+   2b. ~~`pull` vs `fetch` vs `sync` naming~~ → **SETTLED: no sync verb at all.** Sync is an
+   internal act of `inbox`/`resolve`; `inbox <ask-id>` is the artifact door. The parked
+   `fetch` command is never built. (A public `pull` can be added later, purely additively,
+   if scripts/cron need bare sync.)
+   2c. ~~Auto-pull or explicit?~~ → **SETTLED by 2b:** the soft sync runs inside inbox —
+   one correct session-start command; `--no-sync` to skip. A stale inbox claiming "nothing
+   needs you" is the product's worst failure mode, so freshness wins over purity.
 3. **Local mode: commit the outbox or keep it gitignored?** In linked mode the outbox is
    transient (remote is durable); in local mode the files ARE the record, surviving only on
    that machine. → **Keep gitignored by default** (privacy-safe: runs/asks can carry sensitive
    scope; committing should be a deliberate human act). Document the trade-off in the
    scaffolded `.gitignore` comment so the choice is visible.
-4. **Should linked `figs answer` post to the API or refuse ("answer in the app")?** → **Post
-   via the API.** Same verb everywhere; the token attributes the human correctly; refusing
-   would make the CLI worse when connected, violating "remote better".
+4. ~~Should linked `figs answer` POST to the API?~~ → **SETTLED: neither — answers ride
+   `figs push`** like every other writing verb (one transport, no new endpoint, ids minted
+   once so sync-back dedupes). Decided 2026-06-12: locally-recorded answers DO push up, so
+   the app's thread stays complete even for out-of-band answers.
 5. **Keep `--no-push`?** → **Yes** — batching is orthogonal to mode (linked agents legitimately
    batch mid-job and push once).
 6. **Dual-accept window for the old `x-figs-token` header?** → **Yes, briefly** — 0.8.0 is on
