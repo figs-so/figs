@@ -30,9 +30,11 @@ The baked default endpoint is `https://app.figs.so`.
 - **Local-first is a contract, not a preference** — every verb except `login`/`logout`/`link`/`push`
   must work offline with no account (the full contract lives in `CLAUDE.md`; releases are gated on
   the no-account audit).
-- **No flag may ever accept an event id or UUID.** Job/ask/unit ids are *names* — agent-authored and
-  meaningful. Event ids and UUIDs are *plumbing* — machine-minted and machine-cited; no command
-  exposes an input for them, and PRs must not add one.
+- **No flag may ever accept an event id or the agent UUID.** Job/ask/unit ids are *names* —
+  agent-authored and meaningful. Event ids and the agent UUID are *record-level plumbing* —
+  machine-minted and machine-cited; no command exposes an input for them, and PRs must not add
+  one. (The one named exception: `link --workspace <uuid>` — connection configuration, not
+  record plumbing.)
 - Keep `SPEC.md` minimal and explicitly versioned.
 - Match the surrounding style; be kind in reviews and issues.
 
