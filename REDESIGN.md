@@ -218,10 +218,40 @@ exists as an event in `answers.jsonl` — pulled down by sync, or transcribed by
   `chosen`/`by` copied from the cited event for the folded record's readability;
   `--answer <event-id>` to disambiguate when several exist). No `--chosen` retyping, no
   network on the close path.
-- `--note` stays (the agent's one-line account, citing the job id of work done);
-  `--withdrawn` / `--rejected` stay (the no-answer closes). `via` is derived: cited
-  `source: "app"` event → `"figs"`; cited transcribed event → `"human"`; no event → `"self"`
-  or none, as today.
+- **`--run <job-id>` → `resolution.run`** *(new field)* — the job the agent did *because of*
+  the answer; the exact mirror of `ask.run` (the job an ask was born from). This hardens
+  what is free-text convention today (`--note 'job <id>'`) into a machine-readable link, and
+  it's how a manager sees **what happened between the answer and the close**: the cited
+  job's row carries its whole checkpoint trail (checkpoints are folds on the job id — the
+  trail comes free). Full rendered loop: ask → answer event → `resolution.run` → job →
+  checkpoints → outcome. Taught, not enforced: a resolve citing no job is itself
+  informative ("nothing real was done").
+- `--note` stays (the agent's one-line prose account); `--withdrawn` / `--rejected` stay
+  (the no-answer closes). `via` is derived: cited `source: "app"` event → `"figs"`; cited
+  transcribed event → `"human"`; no event → `"self"` or none, as today.
+
+### Interconnections — ids and time, never pointers between same kinds
+
+The linkage rule, stated as law (it's true today by accident; keep it true by design):
+**chains emerge from ids + time; no record ever points at its own kind.** Asks never link
+asks, runs never link runs — every link is one hop, across kinds, so trees, cycles, and
+nesting are structurally impossible. The graph is bipartite with the **job as the hub**:
+
+- `ask.run` — the job an ask was born from (work → ask).
+- `resolution.run` — the job an answer caused (answer → work). *(new, above)*
+- `event.ask` — every human event keys to its ask; **the ask id IS the thread** — revisions
+  fold on the same id, events accumulate against it, display orders by `ts`. No chain
+  structure to maintain or corrupt.
+- `resolution.answer` — the event a close acted on (attribution by mechanism).
+- `session.trigger` — the human-readable breadcrumb the other way ("inbox: answer on
+  acme-bridge"); prose by design.
+
+**Explicitly refused: an `ask.parent`/`supersedes` field.** A follow-up need discovered
+while acting on an answer chains *through the job* (prev ask → `resolution.run` → job →
+`ask.run` → new ask). The only unlinked case — a follow-up ask with zero work in between —
+is covered by convention (name the prior ask in `found`). If dogfooding shows bare
+ask-chains are common, a field can be added additively later; pointers are cheap to wait
+for and expensive to retract.
 
 **The full loop, both modes, one ritual:** ask → *(answer arrives — app or chat)* → record if
 chat (`figs answer`) / synced if app → act, report real work under its own job id →
@@ -339,6 +369,8 @@ zero cost — which is exactly what makes the funnel honest.
 - §6.3 *(new)*: `answers.jsonl` — the human-utterance ledger; event shape lifted from
   Reserved + the `source` field (*where* the answer arrived: `app` · `chat` · extensible).
   Events are immutable, ids minted once. **Pushed** (it's wire format).
+- §6.2: `resolution.run` *(new optional field)* — the job the answer caused; mirror of
+  `ask.run`. Plus the linkage law in §1 or §6: ids + time, never same-kind pointers.
 - §8: wire auth = `Authorization: Bearer`; push payload gains `"answers": […]`; add the
   **down-sync contract** beside push — a GET for this agent's events + locally-absent
   records (and per-ask artifact restore), delivery agent-pulled as Reserved already promises.
