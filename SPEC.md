@@ -150,7 +150,8 @@ An ask is the **anchor of a thread whose two halves are owned by different parti
 
   ```jsonc
   { "id": "acme-bridge", "status": "resolved",
-    "resolution": { "chosen": "Strip the alpha prefix", "via": "human", "by": "Sarah (accounting)" } }
+    "resolution": { "chosen": "Strip the alpha prefix", "via": "human",
+                    "by": "Sarah (accounting)", "ts": "2026-06-01T09:12:00Z" } }
   ```
 
   Appending keeps the local file crash-safe, concurrency-safe (multiple runners), and an honest
@@ -174,6 +175,7 @@ in the agent's own workflow; answers flowing back through the reader are arrivin
 | `via` | `"figs"` \| `"human"` \| `"self"` | Where the unblock came from: an answer pulled from Figs (verified — see `answer`) · answered out-of-band (self-reported) · the blocker cleared on its own. |
 | `by` | string | Who answered, as the agent knows it (self-reported; verified attribution only exists for `via: "figs"`). |
 | `answer` | string | The Figs answer-event id the agent acted on — written by `figs resolve` when the answer came through the inbox (attribution by mechanism, never typed). The cited event may be an answer **or a qualified verdict** (a verdict carrying `chosen`). |
+| `ts` | string (ISO-8601 w/ offset) | When the agent closed it — **machine-stamped by `figs resolve`, never typed**. The agent's claim of the execution-adjacent moment, same self-reported grade as the record `ts`; readers stamp their own receipt at ingest and surface both only when they diverge. Lives *inside* `resolution` so the fold can't collide with the record's raise `ts`. |
 
 All fields optional; a bare-string `resolution` is shorthand for `{ "note": … }` and readers
 normalize it to the object form.

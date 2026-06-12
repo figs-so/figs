@@ -303,6 +303,16 @@ const readLines = (repo, name) =>
     .filter(Boolean)
     .map((l) => JSON.parse(l))
 const lastLine = (repo, name) => readLines(repo, name).at(-1)
+/** Assert resolution.ts is a real machine stamp; return the rest for deepEqual. */
+const unstampResolution = (resolution) => {
+  const { ts, ...rest } = resolution
+  assert.match(
+    ts ?? "",
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/,
+    "resolve stamps resolution.ts (the close's machine clock)",
+  )
+  return rest
+}
 
 test("report writes a stamped run line and pushes it", async () => {
   mock.lastIngest = null
@@ -559,7 +569,11 @@ test("resolve enforces verbatim --chosen with a did-you-mean", async () => {
   assert.equal(good.code, 0, good.out)
   const fold = lastLine(repo, "asks.jsonl")
   assert.equal(fold.status, "resolved")
-  assert.deepEqual(fold.resolution, { chosen: "Strip the alpha prefix", by: "Sarah", via: "human" })
+  assert.deepEqual(unstampResolution(fold.resolution), {
+    chosen: "Strip the alpha prefix",
+    by: "Sarah",
+    via: "human",
+  })
 })
 
 test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async () => {
@@ -690,7 +704,11 @@ test("resolve --rejected records the human's no (terminal close, via human)", as
   assert.equal(r.code, 0, r.out)
   const fold = lastLine(repo, "asks.jsonl")
   assert.equal(fold.status, "rejected")
-  assert.deepEqual(fold.resolution, { by: "Sarah", note: "not this quarter", via: "human" })
+  assert.deepEqual(unstampResolution(fold.resolution), {
+    by: "Sarah",
+    note: "not this quarter",
+    via: "human",
+  })
 })
 
 // ---------- figs inbox + the verified close (auto-cite) ---------------------
@@ -927,7 +945,7 @@ test("resolve auto-cites the answer event it acted on (via figs, verified)", asy
   )
   assert.equal(r.code, 0, r.out)
   const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(fold.resolution, {
+  assert.deepEqual(unstampResolution(fold.resolution), {
     chosen: "Strip the alpha prefix",
     via: "figs",
     answer: "ev-ans-7",
@@ -961,7 +979,7 @@ test("resolve auto-cites a qualified verdict by its chosen path", async () => {
   )
   assert.equal(r.code, 0, r.out)
   const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(fold.resolution, {
+  assert.deepEqual(unstampResolution(fold.resolution), {
     chosen: "Approved — file the 15",
     via: "figs",
     answer: "ev-qv-2",
@@ -1042,5 +1060,5 @@ test("resolve falls back to via human when the inbox has nothing (offline path)"
   })
   assert.equal(r.code, 0, r.out)
   const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(fold.resolution, { by: "Sarah", via: "human" })
+  assert.deepEqual(unstampResolution(fold.resolution), { by: "Sarah", via: "human" })
 })

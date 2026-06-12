@@ -1299,12 +1299,18 @@ async function buildResolution(askId, { chosen, by, note, withdrawn, rejected })
     if (!by && cited.byName) resolution.by = cited.byName
   }
 
+  // The close's own clock — machine-stamped, never typed (same posture as the
+  // record `ts`). It lives INSIDE resolution so the fold can't collide with
+  // the record's raise `ts` (folds are field-level merges); the reader stamps
+  // its own receipt (`closedAt`) at ingest — two clocks, claim vs receipt.
+  resolution.ts = nowIso()
+
   warnEatenDollar(resolution.chosen, resolution.note)
   const line = {
     id: askId,
     status: withdrawn ? "withdrawn" : rejected ? "rejected" : "resolved",
+    resolution,
   }
-  if (Object.keys(resolution).length) line.resolution = resolution
   return { line, warnings }
 }
 
