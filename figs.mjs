@@ -1443,6 +1443,14 @@ async function checkpointCmd() {
     )
   }
   await autoPush()
+  // A checkpoint exists to survive a crash — local-only protects nothing.
+  // autoPush already said "saved locally"; for THIS verb that reads like
+  // success, so say what it actually means.
+  if (process.exitCode === 1) {
+    console.warn(
+      `figs: ! this checkpoint is NOT protecting the job yet — nothing reached the server. Run \`figs push\` before continuing the work.`,
+    )
+  }
 }
 
 async function askCmd() {

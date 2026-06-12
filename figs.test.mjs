@@ -722,6 +722,16 @@ test("checkpoint requires --id and --note, teaching each fix", async () => {
   assert.match(noNote.out, /needs --note/)
 })
 
+test("a checkpoint whose push fails says loudly it protects nothing yet", async () => {
+  const repo = await pushableRepo()
+  // no token → the auto-push fails; the local save alone must not read as success
+  const r = await run(["checkpoint", "--id", "job-crash", "--note", "underway"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /NOT protecting the job yet/)
+  assert.match(r.out, /figs push/)
+  assert.equal(lastLine(repo, "runs.jsonl").id, "job-crash", "still saved locally")
+})
+
 test("a second checkpoint folds onto the job — no re-open line", async () => {
   const repo = await pushableRepo()
   await run(["checkpoint", "--id", "job-2", "--note", "step 1", "--no-push"], { cwd: repo, token: "t" })
