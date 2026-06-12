@@ -25,13 +25,26 @@
 .figs/
 ├── config.json        # identity + destination (committed, non-secret)
 ├── agent.json         # the charter — who this agent is (committed)
+├── CONTRACT.md        # agent-authored: what this agent surfaces / holds back (committed)
+├── GUIDE.md           # orientation breadcrumb, written by the CLI (committed)
 ├── runs.jsonl         # activity log, one JSON object per line (outbox; gitignored)
 ├── asks.jsonl         # things needing a human, one per line (outbox; gitignored)
 └── artifacts/         # files referenced by runs/asks (outbox; gitignored)
 ```
 
-**Commit** `config.json` + `agent.json` (identity + charter). The activity files (`runs.jsonl`,
-`asks.jsonl`, `artifacts/`) are a transient outbox and are typically gitignored.
+**Commit** `config.json` + `agent.json` + `CONTRACT.md` + `GUIDE.md`. The activity files
+(`runs.jsonl`, `asks.jsonl`, `artifacts/`) are a transient outbox and are typically gitignored.
+
+**`CONTRACT.md` + `GUIDE.md` are companion conventions, not wire format** — they are never
+pushed. `CONTRACT.md` is the standing agreement between the agent and its user about what gets
+surfaced; `GUIDE.md` is an orientation stub the reference CLI writes (and never clobbers).
+Implementations may add files like these; readers must ignore files this spec doesn't name.
+
+**The membership rule — what belongs in `.figs/`:** everything in the folder is *Figs-facing* —
+protocol metadata (`config.json`), the published record (the charter, the outbox), or a
+convention *about* publishing (`CONTRACT.md`, `GUIDE.md`). An agent's private working state —
+memory, self-checks, scratch notes — lives outside `.figs/`, elsewhere in the repo. If a file's
+only reader is the agent itself, it does not belong here.
 
 ## 3. `config.json` — identity + destination
 
