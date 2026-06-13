@@ -324,9 +324,9 @@ test("push passes asks through verbatim — to, withdrawn, structured resolution
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a1","ts":"2026-06-10T00:00:00Z","type":"needs-decision","to":"manager","title":"Pick a path","options":["A","B"]}\n` +
+    `{"id":"a1","ts":"2026-06-10T00:00:00Z","type":"question","to":"manager","title":"Pick a path","options":["A","B"]}\n` +
       `{"id":"a1","status":"resolved","resolution":{"chosen":"A","via":"human","by":"Sarah"}}\n` + // folds onto a1
-      `{"id":"a2","ts":"2026-06-10T01:00:00Z","type":"needs-decision","to":"builder","title":"Creds expired","status":"withdrawn","resolution":"creds rotated themselves"}\n`,
+      `{"id":"a2","ts":"2026-06-10T01:00:00Z","type":"question","to":"builder","title":"Creds expired","status":"withdrawn","resolution":"creds rotated themselves"}\n`,
   )
   const r = await run(["push"], { cwd: repo, token: "t" })
   assert.equal(r.code, 0, r.out)
@@ -494,7 +494,7 @@ test("ask raises a self-contained ask linked to its run by explicit id", async (
   writeFileSync(join(repo, "previews.html"), "<p>emails</p>")
   await run(["report", "--result", "drafted", "--id", "recon-1", "--no-push"], { cwd: repo, token: "t" })
   // "last" is deliberately unsupported — concurrent sessions report in parallel.
-  const guessy = await run(["ask", "fyi", "--title", "x", "--run", "last"], {
+  const guessy = await run(["ask", "question", "--title", "x", "--run", "last"], {
     cwd: repo,
     token: "t",
   })
@@ -536,7 +536,7 @@ test("ask raises a self-contained ask linked to its run by explicit id", async (
 test("ask --on-approve outside sign-off teaches the approval contract", async () => {
   const repo = await pushableRepo()
   const r = await run(
-    ["ask", "needs-decision", "--title", "Pick a rule", "--on-approve", "apply it"],
+    ["ask", "question", "--title", "Pick a rule", "--on-approve", "apply it"],
     { cwd: repo, token: "t" },
   )
   assert.equal(r.code, 1)
@@ -558,7 +558,7 @@ test("doctor flags hand-written onApprove on a non-sign-off ask", async () => {
   const repo = await pushableRepo()
   appendFileSync(
     join(repo, ".figs", "asks.jsonl"),
-    JSON.stringify({ id: "a-bad", type: "fyi", title: "note", onApprove: ["do x"] }) + "\n",
+    JSON.stringify({ id: "a-bad", type: "question", title: "note", onApprove: ["do x"] }) + "\n",
   )
   const r = await run(["doctor"], { cwd: repo, token: "t" })
   assert.equal(r.code, 1)
@@ -584,7 +584,7 @@ test("ask with a bogus type suggests the valid one", async () => {
 
 test("ask without a title teaches the fix", async () => {
   const repo = await pushableRepo()
-  const r = await run(["ask", "fyi"], { cwd: repo, token: "t" })
+  const r = await run(["ask", "question"], { cwd: repo, token: "t" })
   assert.equal(r.code, 1)
   assert.match(r.out, /needs --title/)
 })
@@ -592,7 +592,7 @@ test("ask without a title teaches the fix", async () => {
 test("ask --stdin takes a JSON object; flags still stamp and validate", async () => {
   const repo = await pushableRepo()
   const body = {
-    type: "needs-decision",
+    type: "question",
     title: "No bridge rule for prefixed invoice numbers",
     found: "~180 rows can't be matched safely; a long explanation lives here.",
     need: "Confirm the bridge rule.",
@@ -605,7 +605,7 @@ test("ask --stdin takes a JSON object; flags still stamp and validate", async ()
   })
   assert.equal(r.code, 0, r.out)
   const ask = lastLine(repo, "asks.jsonl")
-  assert.equal(ask.type, "needs-decision")
+  assert.equal(ask.type, "question")
   assert.equal(ask.found, body.found)
   assert.ok(ask.id && ask.ts, "CLI stamps id + ts onto stdin asks")
 })
@@ -614,7 +614,7 @@ test("resolve enforces verbatim --chosen with a did-you-mean", async () => {
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-bridge","ts":"2026-06-10T00:00:00Z","type":"needs-decision","title":"Bridge rule","options":["Strip the alpha prefix","Treat as out-of-scope"]}\n`,
+    `{"id":"a-bridge","ts":"2026-06-10T00:00:00Z","type":"question","title":"Bridge rule","options":["Strip the alpha prefix","Treat as out-of-scope"]}\n`,
   )
   const bad = await run(["resolve", "a-bridge", "--chosen", "strip the alpha prefix"], {
     cwd: repo,
@@ -641,7 +641,7 @@ test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async 
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"needs-decision","title":"Stuck"}\n`,
+    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"question","title":"Stuck"}\n`,
   )
   const conflict = await run(["resolve", "a-old", "--withdrawn", "--chosen", "x"], {
     cwd: repo,
@@ -833,7 +833,7 @@ test("settling a job with an open ask citing it teaches, never blocks", async ()
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"bridge-q","ts":"2026-06-12T10:00:00Z","type":"needs-decision","status":"open","title":"Bridge rule?","run":"recon-x"}\n` +
+    `{"id":"bridge-q","ts":"2026-06-12T10:00:00Z","type":"question","status":"open","title":"Bridge rule?","run":"recon-x"}\n` +
       `{"id":"done-q","ts":"2026-06-12T10:00:00Z","type":"sign-off","status":"resolved","title":"Old one","run":"recon-x"}\n`,
   )
   const r = await run(["report", "--id", "recon-x", "--result", "done", "--no-push"], {
@@ -934,14 +934,14 @@ test("inbox lists sections with the exact next command per state", async () => {
     inboxAsk({ id: "ask-ok", events: [approval] }),
     inboxAsk({
       id: "ask-no",
-      type: "needs-decision",
+      type: "question",
       status: "rejected",
       title: "Old question",
       events: [
         { ...approval, id: "ev-rej", verdict: "rejected", text: "not needed anymore" },
       ],
     }),
-    inboxAsk({ id: "ask-quiet", type: "needs-decision", title: "Stuck on creds", events: [] }),
+    inboxAsk({ id: "ask-quiet", type: "question", title: "Stuck on creds", events: [] }),
   ]
   const r = await run(["inbox"], { cwd: repo, token: "t" })
   assert.equal(r.code, 0, r.out)
@@ -989,7 +989,7 @@ test("inbox pre-fills --chosen with the cited option on answered asks", async ()
   mock.inbox.asks = [
     inboxAsk({
       id: "ask-d",
-      type: "needs-decision",
+      type: "question",
       options: ["Strip the alpha prefix", "Use a mapping you provide"],
       events: [
         {
@@ -1004,7 +1004,7 @@ test("inbox pre-fills --chosen with the cited option on answered asks", async ()
     }),
     inboxAsk({
       id: "ask-t",
-      type: "needs-decision",
+      type: "question",
       title: "Free-text question",
       events: [
         { ...approval, id: "ev-t-1", kind: "answer", verdict: null, chosen: null, text: "use UTC everywhere" },
@@ -1018,15 +1018,61 @@ test("inbox pre-fills --chosen with the cited option on answered asks", async ()
   assert.doesNotMatch(r.out, /resolve ask-t --chosen/, "no --chosen placeholder for a text-only answer")
 })
 
-test("ask blocked teaches the merge into needs-decision", async () => {
+test("ask blocked teaches that it isn't an ask type (use a question)", async () => {
   const repo = await pushableRepo()
   const r = await run(["ask", "blocked", "--title", "Stuck on creds", "--no-push"], {
     cwd: repo,
     token: "t",
   })
   assert.equal(r.code, 1)
-  assert.match(r.out, /"blocked" was folded into needs-decision/)
+  assert.match(r.out, /"blocked" isn't an ask type/)
   assert.match(r.out, /RUN's status/)
+})
+
+test("ask needs-decision teaches the rename to question", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "needs-decision", "--title", "Pick a path", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /"needs-decision" was renamed to "question"/)
+})
+
+test("ask fyi teaches it was retired (a note is a report)", async () => {
+  const repo = await pushableRepo()
+  const r = await run(["ask", "fyi", "--title", "FYI: contract updated", "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /"fyi" was retired/)
+})
+
+test("readJsonl tolerates a crash-torn final line but dies on interior corruption", async () => {
+  // A process killed mid-append leaves a half-written LAST line — the journal
+  // must survive that. Interior corruption is real damage and must still fail.
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  writeFileSync(
+    join(repo, ".figs/runs.jsonl"),
+    `{"id":"r1","ts":"2026-06-13T00:00:00Z","result":"ok","state":"settled"}\n` +
+      `{"id":"r2","ts":"2026-06-13T01:00:00Z","result":"hal`, // torn final line (crash)
+  )
+  const ok = await run(["report", "--id", "r3", "--result", "next"], { cwd: repo })
+  assert.equal(ok.code, 0, ok.out)
+  assert.match(ok.out, /last line of .figs\/runs.jsonl is broken/)
+
+  const repo2 = newRepo()
+  await run(["init"], { cwd: repo2 })
+  writeFileSync(
+    join(repo2, ".figs/runs.jsonl"),
+    `{"id":"r1","ts":"2026-06-13T00:00:00Z","result":"tor` + `\n` + // torn INTERIOR line
+      `{"id":"r2","ts":"2026-06-13T01:00:00Z","result":"ok","state":"settled"}\n`,
+  )
+  const bad = await run(["report", "--id", "r3", "--result", "next"], { cwd: repo2 })
+  assert.notEqual(bad.code, 0)
+  assert.match(bad.out, /malformed JSON in .figs\/runs.jsonl line 1/)
 })
 
 test("inbox is empty-friendly and honest about truncation", async () => {
@@ -1121,12 +1167,12 @@ test("resolve auto-cites the answer event it acted on (via figs, verified)", asy
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-cite","ts":"2026-06-11T00:00:00Z","type":"needs-decision","title":"Bridge rule","options":["Strip the alpha prefix","Out of scope"]}\n`,
+    `{"id":"a-cite","ts":"2026-06-11T00:00:00Z","type":"question","title":"Bridge rule","options":["Strip the alpha prefix","Out of scope"]}\n`,
   )
   mock.inbox.asks = [
     inboxAsk({
       id: "a-cite",
-      type: "needs-decision",
+      type: "question",
       title: "Bridge rule",
       options: ["Strip the alpha prefix", "Out of scope"],
       events: [
@@ -1197,7 +1243,7 @@ test("resolve self-fetches an ask raised elsewhere, then folds the close onto it
   mock.inbox.asks = [
     inboxAsk({
       id: "a-remote",
-      type: "needs-decision",
+      type: "question",
       title: "Creds expired",
       events: [
         {
@@ -1256,7 +1302,7 @@ test("resolve falls back to via human when the inbox has nothing (offline path)"
   const repo = await pushableRepo()
   writeFileSync(
     join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"needs-decision","title":"Stuck"}\n`,
+    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"question","title":"Stuck"}\n`,
   )
   const r = await run(["resolve", "a-ob", "--by", "Sarah", "--no-push"], {
     cwd: repo,
@@ -1304,9 +1350,9 @@ test("report with no --id prints no new-vs-fold line (auto-id is always new)", a
 test("ask announces new-vs-fold for an explicit --id (a revision folds)", async () => {
   const repo = newRepo()
   await run(["init"], { cwd: repo })
-  const a = await run(["ask", "needs-decision", "--id", "q1", "--title", "first"], { cwd: repo })
+  const a = await run(["ask", "question", "--id", "q1", "--title", "first"], { cwd: repo })
   assert.match(a.out, /new ask opened: q1/)
-  const b = await run(["ask", "needs-decision", "--id", "q1", "--title", "revised"], { cwd: repo })
+  const b = await run(["ask", "question", "--id", "q1", "--title", "revised"], { cwd: repo })
   assert.match(b.out, /folded onto existing ask q1/)
 })
 
@@ -1322,7 +1368,7 @@ test("checkpoint reopening a settled job warns (legal, but nudge a new id)", asy
 test("--run warns on a dangling link but never blocks", async () => {
   const repo = newRepo()
   await run(["init"], { cwd: repo })
-  const r = await run(["ask", "needs-decision", "--title", "t", "--run", "nope"], { cwd: repo })
+  const r = await run(["ask", "question", "--title", "t", "--run", "nope"], { cwd: repo })
   assert.equal(r.code, 0, r.out) // warn, not die
   assert.match(r.out, /--run "nope" isn't a job in this journal/)
 })
@@ -1381,7 +1427,7 @@ test("no-account audit: the local surface works offline with no credentials", as
     [["doctor"], 0],
     [["report", "--id", "j", "--result", "ok"], 0],
     [["checkpoint", "--id", "j2", "--note", "wip"], 0],
-    [["ask", "needs-decision", "--title", "q"], 0],
+    [["ask", "question", "--title", "q"], 0],
     [["push"], 1], // not linked → structural error (fix: figs link)
   ]
   for (const [args, code] of cases) {

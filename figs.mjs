@@ -183,8 +183,8 @@ const COMMANDS = {
     ],
     desc: "raise an ask — one self-contained line in asks.jsonl, pushed so a human sees it",
     more: [
-      "<type> = the answer contract: needs-decision (give me an answer) ·",
-      "sign-off (give me a verdict) · fyi (no answer — a for-the-record note).",
+      "<type> = the answer contract: question (give me an answer) ·",
+      "sign-off (give me a verdict). Two types — the type IS the contract.",
       "Two strangers read every ask — a human deciding, a future session acting;",
       "the record must carry everything both need: --found (what you saw), --need",
       "(what you need), --option (repeatable; short, stable, quotable — answers cite",
@@ -339,11 +339,13 @@ function genId(prefix) {
 // ---------- local validation (the spec's common mistakes, caught on write) ----
 // The server's schema stays the source of truth; these catch what hand-authors
 // and flag typos get wrong, with errors that teach the fix.
-// Three types = three answer contracts: needs-decision (give me an answer) ·
-// sign-off (give me a verdict) · fyi (no answer — a for-the-record note).
-// "blocked" was folded into needs-decision in 0.6.0: a stuck JOB is the run's
-// status, not an ask type; what you need from a human is a needs-decision.
-const ASK_TYPES = ["needs-decision", "sign-off", "fyi"]
+// Two types = two answer contracts, and the type IS the contract:
+//   question → answer (an option or free text) · sign-off → verdict.
+// History (all pre-launch, free to break): "blocked" folded into the type that
+// became "question" (a stuck JOB is the run's status, not an ask type);
+// "needs-decision" was renamed to "question" (1.0); "fyi" was retired (1.0) — a
+// for-the-record note is a settled report, not an ask.
+const ASK_TYPES = ["question", "sign-off"]
 const RUN_STATUSES = ["ok", "warn", "fail"]
 // Lifecycle, orthogonal to status (outcome): checkpoint stamps in-flight,
 // report stamps settled. Absent = settled (a plain report is a complete fact).
@@ -394,7 +396,15 @@ function validateAsk(a) {
     )
   } else if (a.type === "blocked") {
     issues.push(
-      `${label}.type: "blocked" was folded into needs-decision — a stuck job is the RUN's status (re-report --status onto the same job id); what you need from a human is a needs-decision ask`,
+      `${label}.type: "blocked" isn't an ask type — a stuck job is the RUN's status (re-report --status onto the same job id); what you need from a human is a "question"`,
+    )
+  } else if (a.type === "needs-decision") {
+    issues.push(
+      `${label}.type: "needs-decision" was renamed to "question" (the type is the answer contract: question → answer · sign-off → verdict)`,
+    )
+  } else if (a.type === "fyi") {
+    issues.push(
+      `${label}.type: "fyi" was retired — a for-the-record note is a settled report (\`figs report\`), not an ask; if you actually need a human it's a "question" or "sign-off"`,
     )
   } else checkEnum(issues, a, "type", ASK_TYPES, label)
   if (!a.title) issues.push(`${label}: missing required "title"`)
@@ -1969,18 +1979,35 @@ async function pushArtifacts(base, token, config, runs, asks) {
 function readJsonl(name) {
   const p = join(repoDir, name)
   if (!existsSync(p)) return []
+  const lines = readFileSync(p, "utf8").split("\n")
+  // A process killed mid-append leaves a half-written FINAL line — the journal
+  // must survive the agent dying while writing it. Tolerate exactly one broken
+  // last (non-empty) line: warn + skip, keep the rest. A broken INTERIOR line is
+  // real corruption — die loudly. (`name` files are append-only, so only the
+  // tail can be torn.)
+  let lastNonEmpty = -1
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim()) {
+      lastNonEmpty = i
+      break
+    }
+  }
   const out = []
-  readFileSync(p, "utf8")
-    .split("\n")
-    .forEach((line, i) => {
-      const s = line.trim()
-      if (!s) return
-      try {
-        out.push(JSON.parse(s))
-      } catch {
+  lines.forEach((line, i) => {
+    const s = line.trim()
+    if (!s) return
+    try {
+      out.push(JSON.parse(s))
+    } catch {
+      if (i === lastNonEmpty) {
+        console.warn(
+          `figs: ! last line of .figs/${name} is broken — likely a crash mid-write; skipped it (re-record that entry). The rest is intact.`,
+        )
+      } else {
         die(`malformed JSON in .figs/${name} line ${i + 1}: ${s.slice(0, 80)}`)
       }
-    })
+    }
+  })
   return out
 }
 
