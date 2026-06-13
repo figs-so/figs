@@ -51,13 +51,15 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 
 ## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
 
-**CLI dev is functionally complete on `redesign/v1` (106 tests green).** Done + committed:
-steps 1, 2 (`--json` envelope), 3 (core + attachments + **the linked down-sync**, reviewed
-against the app's shipped `GET /api/messages` contract), 4 (auth), help-regroup, **SPEC v2**,
-**README flip**. The whole loop — local AND linked — works end to end. Remaining is docs + ship:
+**CLI + docs are complete on `redesign/v1` (108 tests green).** Done + committed: steps 1, 2
+(`--json` envelope), 3 (core + attachments + the linked down-sync, reviewed against the app's
+shipped `GET /api/messages`), 4 (auth), help-regroup, **SPEC v2**, **README flip**, **GUIDE.md
+v2 rewrite** (lifecycle, inbox-cadence, job-history-home, anchor) + CONTRACT/init reframe. The
+whole loop — local AND linked — works end to end. **Only ship-gated work remains:**
 
-- [ ] **`GUIDE.md` deep rewrite + `llms.txt`** (deferred to the end by Wayne) — the long agent guide still describes the old model. (`llms.txt` is app-served — app thread.)
-- [ ] **Ship**: cross-repo onramps (`create-openfigs` → `figs init` first; `openfigs` template GUIDE), HQ `docs/architecture.md`, bump `package.json` to 1.0.0, merge `redesign/v1`, publish (needs Wayne's OK — outward).
+- [ ] **Ship** (needs Wayne's OK — outward/irreversible): bump `package.json` → 1.0.0, merge `redesign/v1` → main, publish `@figs-so/cli@1.0.0`. On merge, `/llms.txt` auto-serves the rewritten GUIDE.md (confirm the app redirect targets the repo guide).
+- [ ] **Cross-repo onramps**: `create-openfigs` outro → `figs init` first (tiny; gated on the 1.0.0 publish + an npm release). **`openfigs` template — HOLD**: Wayne is weighing making openfigs a single employee (not a fleet); don't touch its template until that's decided.
+- [ ] **HQ `docs/architecture.md`** — update at ship (incl. the quiet "a conforming server is substitutable" line).
 
 ## Working rules
 
