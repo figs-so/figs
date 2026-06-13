@@ -7,7 +7,7 @@
  * fresh cwd for anything that touches .figs/. FIGS_ENDPOINT points at the mock;
  * FIGS_TOKEN stands in for a login.
  */
-import { test, before, after } from "node:test"
+import { test, before, beforeEach, after } from "node:test"
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"
@@ -92,6 +92,20 @@ before(async () => {
 })
 
 after(() => server.close())
+
+// Reset all mutable mock state before every test, so no test depends on the
+// order it runs in or on state a prior test happened to leave behind.
+beforeEach(() => {
+  mock.workspaces = []
+  mock.versionMin = "0.0.1"
+  mock.lastIngest = null
+  mock.uploads = []
+  mock.inbox = { ok: true, truncated: false, asks: [] }
+  mock.messages = []
+  mock.messagesTruncated = false
+  mock.messagesStatus = 200
+  mock.rawArtifacts = new Map()
+})
 
 // ---------- harness ------------------------------------------------------
 // Async on purpose: the mock server lives in THIS process, so the runner must
@@ -1501,4 +1515,44 @@ test("local-mode inbox never touches the network (no sync attempted)", async () 
   const r = await run(["inbox"], { cwd: repo })
   assert.equal(r.code, 0, r.out)
   assert.equal(readLines(repo, "messages.jsonl").length, 0, "local mode pulls nothing")
+})
+
+// ============================================================================
+// Coverage hardening — core behaviors not yet pinned directly
+// ============================================================================
+
+test("close cites the NEWEST reply when an ask has several (a correction wins)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?", "--option", "A", "--option", "B"], { cwd: repo })
+  // Two answers over time — the human corrected themselves; the later one wins.
+  await run(["answer", "q", "--chosen", "A", "--by", "Sarah"], { cwd: repo })
+  await new Promise((r) => setTimeout(r, 10)) // ensure a strictly later ts
+  await run(["answer", "q", "--chosen", "B", "--by", "Sarah"], { cwd: repo })
+  const r = await run(["close", "q"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.resolution.chosen, "B", "the newest answer is the one cited")
+})
+
+test("full back-and-forth: changes-requested → re-raise on the same id → approve → close", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "sign-off", "--id", "s", "--title", "Send v1"], { cwd: repo })
+  // Round 1: human asks for changes → close refuses, inbox says revise.
+  await run(["answer", "s", "--request-changes", "--by", "Wayne"], { cwd: repo })
+  const blocked = await run(["close", "s"], { cwd: repo })
+  assert.equal(blocked.code, 1)
+  assert.match(blocked.out, /changes were requested/)
+  // Revise: re-raise on the SAME id (a fold), not a new ask.
+  const reraise = await run(["ask", "sign-off", "--id", "s", "--title", "Send v2 (revised)"], { cwd: repo })
+  assert.match(reraise.out, /folded onto existing ask s/)
+  // Round 2: approved → close resolves, citing the approval.
+  await new Promise((r) => setTimeout(r, 10))
+  await run(["answer", "s", "--approve", "--by", "Wayne"], { cwd: repo })
+  const done = await run(["close", "s"], { cwd: repo })
+  assert.equal(done.code, 0, done.out)
+  assert.equal(lastLine(repo, "asks.jsonl").status, "resolved")
+  // The ask still folds to one record; the thread kept every round.
+  assert.equal(readLines(repo, "messages.jsonl").length, 2)
 })
