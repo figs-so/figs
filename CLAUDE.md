@@ -12,10 +12,11 @@ it *better* (verified answers, multiplayer, org chart) — never *possible*. Eve
 `figs.mjs` or `SPEC.md` is audited against these rules:
 
 1. **Every verb except `login`/`logout`/`link`/`push` must complete offline, with no
-   account, exit 0.** The only network touches elsewhere are soft and degradable: `inbox`'s
-   events-only down-sync and `show`'s missing-artifact fetch when linked — loud on failure
-   or truncation, never silent. Local data never requires a server round-trip (in-flight
-   jobs live in `runs.jsonl` — derive them there).
+   account, exit 0.** The only network touch elsewhere is `inbox`'s soft, messages-only
+   down-sync when linked — loud on failure or truncation, never silent. `show` is a pure
+   local read (no artifact download; a missing reference points to the app). Local data
+   never requires a server round-trip (in-flight jobs live in `runs.jsonl` — derive them
+   there).
 2. **A missing token or workspace is a *state*, not an error — and exit codes carry exactly
    three meanings:** `0` recorded (and published if linked) · `1` nothing was written (fix
    the input) · `2` recorded locally, publish failed (`figs push` retries — **never re-run
@@ -31,17 +32,17 @@ it *better* (verified answers, multiplayer, org chart) — never *possible*. Eve
    anything a verb writes must be writable by hand and validate identically.
 6. **No network on the hot path of a local verb.** Version checks and remote merges live on
    connected verbs only, and degrade silently.
-7. **No flag may ever accept an event id or the agent UUID.** Two id classes: *names*
-   (job/ask/unit ids — agent-authored, meaningful) and *record-level plumbing* (event ids,
+7. **No flag may ever accept a message id or the agent UUID.** Two id classes: *names*
+   (job/ask/unit ids — agent-authored, meaningful) and *record-level plumbing* (message ids,
    the agent UUID — machine-minted, machine-cited). Plumbing never crosses an agent's
    keyboard; enforcement is absence of surface. *The one named exception:*
    `link --workspace <uuid>` — the workspace id is connection configuration, set once by the
    connector verb. Creatable name-ids announce new-vs-fold on every write; reference ids are
    checked against the journal (closes die, links warn).
 8. **The topology rule: one agent = one repo = one machine.** Agent ledgers (runs/asks) sync
-   UP only — never down; `events.jsonl` (human events) is the sole two-way file (immutable,
-   dedupe by id). Never add a feature that shows another machine's in-flight work in a local
-   inbox.
+   UP only — never down; `messages.jsonl` (human messages) is the sole two-way file
+   (immutable, dedupe by id). Never add a feature that shows another machine's in-flight work
+   in a local inbox.
 
 **Release gate — the no-account audit:** before each release, run every verb in a fresh dir
 with no `~/.figs/credentials.json`, no `FIGS_TOKEN`, and network off. Each must match the
@@ -54,7 +55,7 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 - [ ] `figs doctor` dies "not logged in" after local checks pass.
 - [ ] Writing verbs exit 1 when not logged in (no local-mode exit-0 path without `--no-push`).
 - [ ] Error chains end at "create an account"; README/onramps lead with `login`.
-- [ ] `figs inbox` is fully remote — even in-flight jobs (local data) are fetched from the server; no local answer channel.
+- [ ] `figs inbox` is fully remote — even in-flight jobs (local data) are fetched from the server; no local message channel (`messages.jsonl` + `figs answer`).
 - [ ] Auth: custom `x-figs-token` header (→ `Authorization: Bearer`); single endpoint-blind token in `~/.figs/credentials.json` (→ keyed by endpoint origin).
 
 ## Working rules
