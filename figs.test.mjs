@@ -969,10 +969,10 @@ test("status reports local mode before linking, linked after", async () => {
   const repo = newRepo()
   await run(["init"], { cwd: repo })
   const a = await run(["status", "--json"], { cwd: repo })
-  assert.equal(JSON.parse(a.out).mode, "local")
+  assert.equal(JSON.parse(a.out).data.mode, "local")
   await run(["link", "--workspace", UUID], { cwd: repo })
   const b = await run(["status", "--json"], { cwd: repo })
-  assert.equal(JSON.parse(b.out).mode, "linked")
+  assert.equal(JSON.parse(b.out).data.mode, "linked")
 })
 
 // The no-account audit — the release gate in one test. Every local verb must
@@ -1188,10 +1188,12 @@ test("inbox --json emits a structured, machine-readable view", async () => {
   await run(["answer", "q", "--text", "yes", "--by", "W"], { cwd: repo })
   const r = await run(["inbox", "--json"], { cwd: repo })
   assert.equal(r.code, 0, r.out)
-  const data = JSON.parse(r.out)
-  assert.equal(data.asks.length, 1)
-  assert.equal(data.asks[0].replies.length, 1)
-  assert.ok(data.sync, "carries a sync field for degraded-sync detection")
+  const env = JSON.parse(r.out)
+  assert.equal(env.ok, true, "uniform { ok, data, warnings } envelope")
+  assert.ok(Array.isArray(env.warnings))
+  assert.equal(env.data.asks.length, 1)
+  assert.equal(env.data.asks[0].replies.length, 1)
+  assert.ok(env.data.sync, "carries a sync field for degraded-sync detection")
 })
 
 test("inbox is empty-friendly", async () => {
@@ -1349,4 +1351,41 @@ test("logout removes only the current endpoint's token, keeps the others", async
   assert.equal(creds["https://app.figs.so"].token, "tok-prod", "prod token kept")
   assert.equal(creds["http://127.0.0.1:9999"], undefined, "dev token removed")
   rmSync(home, { recursive: true, force: true })
+})
+
+// ============================================================================
+// Redesign — step 2: the --json envelope ({ ok, data, warnings })
+// ============================================================================
+
+test("read verbs share one { ok, data, warnings } JSON envelope", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "Pick", "--option", "A"], { cwd: repo })
+  await run(["answer", "q", "--chosen", "A", "--by", "Sarah"], { cwd: repo })
+
+  const status = JSON.parse((await run(["status", "--json"], { cwd: repo })).out)
+  assert.equal(status.ok, true)
+  assert.ok("data" in status && Array.isArray(status.warnings))
+
+  const show = JSON.parse((await run(["show", "q", "--json"], { cwd: repo })).out)
+  assert.equal(show.ok, true)
+  assert.equal(show.data.replies.length, 1)
+})
+
+test("doctor --json envelopes the verdict (ok:false on issues)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo }) // charter still has placeholders
+  const r = await run(["doctor", "--json"], { cwd: repo })
+  assert.equal(r.code, 1)
+  const env = JSON.parse(r.out)
+  assert.equal(env.ok, false)
+  assert.equal(env.data.valid, false)
+
+  writeFileSync(join(repo, ".figs/agent.json"), JSON.stringify({ name: "A", mandate: "m" }))
+  const ok = await run(["doctor", "--json"], { cwd: repo })
+  assert.equal(ok.code, 0, ok.out)
+  const okEnv = JSON.parse(ok.out)
+  assert.equal(okEnv.ok, true)
+  assert.equal(okEnv.data.valid, true)
+  assert.equal(okEnv.data.scope, "local")
 })

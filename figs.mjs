@@ -316,6 +316,14 @@ function die(msg) {
 function readJson(path, fallback) {
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : fallback
 }
+/**
+ * The one `--json` envelope for read verbs: `{ ok, data, warnings }`. Uniform
+ * so an agent parses every read the same way and can branch on `ok` and surface
+ * `warnings` (e.g. a degraded sync) without scraping stderr.
+ */
+function printJson(data, { ok = true, warnings = [] } = {}) {
+  console.log(JSON.stringify({ ok, data, warnings }, null, 2))
+}
 /** Read a flag value — supports both `--name value` and `--name=value`. */
 function flag(name) {
   const args = process.argv.slice(2)
@@ -914,26 +922,17 @@ async function status() {
   const linked = Boolean(cfg?.workspaceId)
 
   if (JSON_OUT) {
-    console.log(
-      JSON.stringify(
-        {
-          version: VERSION,
-          mode: linked ? "linked" : "local",
-          endpoint,
-          loggedIn,
-          account: account
-            ? { id: account.id, email: account.email, name: account.name }
-            : null,
-          workspaces: list?.map((w) => ({ id: w.id, name: w.name, role: w.role })),
-          config: cfg ? { agentId: cfg.agentId, workspaceId: cfg.workspaceId ?? null } : null,
-          agentJson: hasAgent,
-          contractMd: hasContract,
-        },
-        null,
-        2,
-      ),
-    )
-    return
+    return printJson({
+      version: VERSION,
+      mode: linked ? "linked" : "local",
+      endpoint,
+      loggedIn,
+      account: account ? { id: account.id, email: account.email, name: account.name } : null,
+      workspaces: list?.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+      config: cfg ? { agentId: cfg.agentId, workspaceId: cfg.workspaceId ?? null } : null,
+      agentJson: hasAgent,
+      contractMd: hasContract,
+    })
   }
 
   const row = (k, v) => console.log(`  ${(k + ":").padEnd(12)} ${v}`)
@@ -1416,20 +1415,19 @@ async function inboxCmd() {
   const quiet = open.filter(({ replies }) => !replies.length)
 
   if (hasFlag("--json")) {
-    console.log(
-      JSON.stringify(
-        {
-          asks: open.map(({ a, replies }) => ({
-            id: a.id, type: a.type, title: a.title, status: a.status ?? "open", replies,
-          })),
-          jobs,
-          sync: { ran: false, reason: isLinked() ? "not-implemented-yet" : "local" },
-        },
-        null,
-        2,
-      ),
+    const sync = { ran: false, reason: isLinked() ? "not-implemented-yet" : "local" }
+    return printJson(
+      {
+        asks: open.map(({ a, replies }) => ({
+          id: a.id, type: a.type, title: a.title, status: a.status ?? "open", replies,
+        })),
+        jobs,
+        sync,
+      },
+      // A degraded/absent sync is surfaced as a warning so an agent can detect
+      // it without scraping stderr (loud once the linked sync lands).
+      { warnings: isLinked() && !sync.ran ? ["sync did not run — showing local state only"] : [] },
     )
-    return
   }
 
   if (open.length === 0 && jobs.length === 0) {
@@ -1476,10 +1474,7 @@ function showCmd() {
   const replies = repliesFor(messages, id)
 
   if (ask || replies.length) {
-    if (hasFlag("--json")) {
-      console.log(JSON.stringify({ ask: ask ?? null, replies }, null, 2))
-      return
-    }
+    if (hasFlag("--json")) return printJson({ ask: ask ?? null, replies })
     if (ask) {
       console.log(`figs: ${ask.title ?? id}`)
       console.log(
@@ -1516,10 +1511,7 @@ function showCmd() {
   const run = runs.find((r) => r.id === id)
   if (run) {
     const trail = readJsonl("runs.jsonl").filter((r) => r.id === id)
-    if (hasFlag("--json")) {
-      console.log(JSON.stringify({ run, trail }, null, 2))
-      return
-    }
+    if (hasFlag("--json")) return printJson({ run, trail })
     console.log(`figs: job ${id}${run.unit ? ` · ${run.unit}` : ""}${run.period ? ` · ${run.period}` : ""}`)
     console.log(`      ${run.state ?? "settled"}${run.status ? ` · ${run.status}` : ""} — ${run.result ?? ""}`)
     console.log(`\n  Trail (each checkpoint/report at the moment it happened):`)
@@ -1991,9 +1983,13 @@ async function doctor() {
   // are>" to the org chart. This is the "not ready to push" signal.
   const placeholders = findPlaceholders(agentJson)
   if (placeholders.length) {
-    console.log("figs: ✗ .figs/agent.json still has template placeholders — fill these in before pushing:")
-    for (const p of placeholders) console.log(`  ${p.path}: ${p.value}`)
-    console.log("  (replace the <…> values by reading your own repo, then re-run `figs doctor`)")
+    if (JSON_OUT) {
+      printJson({ valid: false, placeholders }, { ok: false })
+    } else {
+      console.log("figs: ✗ .figs/agent.json still has template placeholders — fill these in before pushing:")
+      for (const p of placeholders) console.log(`  ${p.path}: ${p.value}`)
+      console.log("  (replace the <…> values by reading your own repo, then re-run `figs doctor`)")
+    }
     process.exit(1)
   }
 
@@ -2005,8 +2001,12 @@ async function doctor() {
     readJsonl("messages.jsonl"),
   )
   if (localIssues.length) {
-    console.log("figs: ✗ local validation issues:")
-    for (const i of localIssues) console.log(`  ${i}`)
+    if (JSON_OUT) {
+      printJson({ valid: false, scope: "local", issues: localIssues }, { ok: false })
+    } else {
+      console.log("figs: ✗ local validation issues:")
+      for (const i of localIssues) console.log(`  ${i}`)
+    }
     process.exit(1)
   }
 
@@ -2015,6 +2015,7 @@ async function doctor() {
   // and that is a full, legitimate pass (the spec's conformance is local).
   if (!config.workspaceId || !getToken()) {
     const why = !config.workspaceId ? "not linked" : "not logged in"
+    if (JSON_OUT) return printJson({ valid: true, scope: "local", serverValidation: "skipped", reason: why })
     console.log(`figs: ✓ .figs/ passes local conformance — server validation skipped (${why})`)
     return
   }
@@ -2026,11 +2027,12 @@ async function doctor() {
     messages: readJsonl("messages.jsonl"),
   })
   if (r.ok) {
+    if (JSON_OUT) return printJson({ valid: true, scope: "server" })
     console.log("figs: ✓ .figs/ is valid — ready to push")
     return
   }
   if (JSON_OUT) {
-    console.log(JSON.stringify(r.issues, null, 2))
+    printJson({ valid: false, scope: "server", issues: r.issues }, { ok: false })
   } else {
     console.log("figs: ✗ validation issues:")
     for (const i of r.issues) {
