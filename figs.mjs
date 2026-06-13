@@ -131,7 +131,7 @@ const COMMANDS = {
     flags: [
       "--result", "--id", "--unit", "--period", "--status", "--trigger", "--attach", "--no-push",
     ],
-    desc: "file a job's outcome — settles its row in runs.jsonl; stamps id/ts/state, pushes",
+    desc: "settle a job — stamps id/ts/state into runs.jsonl (auto-pushes when linked)",
     more: [
       "One run = one JOB — a unit of work your manager would recognize; the runs",
       "list reads as the job list. Give a job a stable, meaningful --id",
@@ -160,7 +160,7 @@ const COMMANDS = {
     flags: [
       "--id", "--note", "--trigger", "--status", "--unit", "--period", "--attach", "--no-push",
     ],
-    desc: "save a job's progress mid-flight — folds onto its row, marks it in-flight, pushes",
+    desc: "save a job's progress mid-flight — marks it in-flight (auto-pushes when linked)",
     more: [
       "Your first checkpoint OPENS the job (state: in-flight) — make it the first",
       "act of any job that will outlive this sitting: say what triggered it",
@@ -184,7 +184,7 @@ const COMMANDS = {
       "--id", "--title", "--need", "--found", "--option", "--on-approve", "--detail",
       "--attach", "--to", "--unit", "--run", "--stdin", "--no-push",
     ],
-    desc: "raise an ask — one self-contained line in asks.jsonl, pushed so a human sees it",
+    desc: "raise an ask — a self-contained line in asks.jsonl (auto-pushes when linked)",
     more: [
       "<type> = the answer contract: question (give me an answer) ·",
       "sign-off (give me a verdict). Two types — the type IS the contract.",
@@ -734,12 +734,22 @@ function printHelp(name) {
     if (c.eg) console.log(`\n  e.g.  ${c.eg}`)
     return
   }
-  console.log("figs — publish your AI agent's state to Figs (https://figs.so)\n")
+  console.log("figs — your AI agent's work journal; report it to humans at https://figs.so\n")
   console.log("Usage: figs <command> [options]\n")
-  console.log("Commands:")
-  for (const [n, c] of Object.entries(COMMANDS)) {
-    console.log(`  ${`${n} ${c.args}`.trim().padEnd(pad)} ${c.desc}`)
+  // Grouped by layer so the local-first model is legible in the help itself:
+  // LOCAL works with no account; CONNECTED needs a one-time login + a workspace.
+  const LOCAL = ["init", "report", "checkpoint", "ask", "answer", "inbox", "show", "close", "doctor", "status", "version", "help"]
+  const CONNECTED = ["login", "logout", "link", "push"]
+  const printGroup = (title, names) => {
+    console.log(title)
+    for (const n of names) {
+      const c = COMMANDS[n]
+      if (c) console.log(`  ${`${n} ${c.args}`.trim().padEnd(pad)} ${c.desc}`)
+    }
   }
+  printGroup("Local (no account needed):", LOCAL)
+  console.log("")
+  printGroup("Connected (one-time login + a workspace):", CONNECTED)
   console.log("\nGlobal flags:")
   console.log(`  ${"-h, --help".padEnd(pad)} show help (or \`figs help <command>\`)`)
   console.log(`  ${"-v, --version".padEnd(pad)} print the CLI version`)

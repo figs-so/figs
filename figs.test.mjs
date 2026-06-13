@@ -1389,3 +1389,15 @@ test("doctor --json envelopes the verdict (ok:false on issues)", async () => {
   assert.equal(okEnv.data.valid, true)
   assert.equal(okEnv.data.scope, "local")
 })
+
+test("help groups commands by layer (local vs connected)", async () => {
+  const r = await run(["help"])
+  assert.equal(r.code, 0)
+  assert.match(r.out, /Local \(no account needed\):/)
+  assert.match(r.out, /Connected \(one-time login \+ a workspace\):/)
+  // answer/show/close are local; link/push are connected
+  const local = r.out.slice(r.out.indexOf("Local"), r.out.indexOf("Connected"))
+  const connected = r.out.slice(r.out.indexOf("Connected"))
+  for (const v of ["init", "answer", "show", "close", "inbox"]) assert.match(local, new RegExp(`\\b${v}\\b`))
+  for (const v of ["link", "push", "login"]) assert.match(connected, new RegExp(`\\b${v}\\b`))
+})
