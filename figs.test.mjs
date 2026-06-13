@@ -128,10 +128,16 @@ test("help prints usage and exits 0", async () => {
   assert.match(r.out, /Usage: figs <command>/)
 })
 
-test("help init documents the auto-select behavior", async () => {
+test("help init documents the local, zero-flag scaffold", async () => {
   const r = await run(["help", "init"])
   assert.equal(r.code, 0)
-  assert.match(r.out, /uses your only workspace/)
+  assert.match(r.out, /no account needed|purely local/i)
+})
+
+test("help link documents connecting a workspace", async () => {
+  const r = await run(["help", "link"])
+  assert.equal(r.code, 0)
+  assert.match(r.out, /workspace/)
 })
 
 test("version matches package.json", async () => {
@@ -150,78 +156,133 @@ test("unknown flag exits non-zero (no silent no-op)", async () => {
   assert.notEqual(r.code, 0)
 })
 
-// ---------- init ----------------------------------------------------------
+// ---------- init (purely local, zero flags) -------------------------------
 
-test("init --workspace <uuid> scaffolds .figs/ without auth", async () => {
+test("init scaffolds .figs/ with no account and no network", async () => {
   const repo = newRepo()
-  const r = await run(["init", "--workspace", UUID], { cwd: repo })
+  const r = await run(["init"], { cwd: repo }) // no token, no flags
   assert.equal(r.code, 0, r.out)
   const cfg = JSON.parse(readFileSync(join(repo, ".figs/config.json"), "utf8"))
-  assert.equal(cfg.workspaceId, UUID)
   assert.match(cfg.agentId, /^[0-9a-f-]{36}$/)
-  for (const f of ["agent.json", "CONTRACT.md", "GUIDE.md", ".gitignore", "runs.jsonl", "asks.jsonl"]) {
+  assert.equal(cfg.workspaceId, undefined, "local config carries no workspaceId")
+  assert.equal(cfg.endpoint, undefined, "local config carries no endpoint")
+  for (const f of ["agent.json", "CONTRACT.md", "GUIDE.md", ".gitignore", "runs.jsonl", "asks.jsonl", "messages.jsonl"]) {
     assert.ok(existsSync(join(repo, ".figs", f)), `missing .figs/${f}`)
   }
 })
 
-test("re-init keeps the agent identity and never clobbers the charter", async () => {
+test("init rejects flags — it is purely local", async () => {
+  const r = await run(["init", "--workspace", UUID], { cwd: newRepo() })
+  assert.notEqual(r.code, 0)
+  assert.match(r.out, /unknown flag/)
+})
+
+test("re-init keeps the identity, never clobbers the charter, and preserves a link", async () => {
   const repo = newRepo()
-  await run(["init", "--workspace", UUID], { cwd: repo })
+  await run(["init"], { cwd: repo })
+  await run(["link", "--workspace", UUID], { cwd: repo }) // logged out → unverified but linked
   const cfg1 = JSON.parse(readFileSync(join(repo, ".figs/config.json"), "utf8"))
   const charter = JSON.stringify({ name: "Authored", mandate: "real content" })
   writeFileSync(join(repo, ".figs/agent.json"), charter)
 
-  const r = await run(["init", "--workspace", UUID], { cwd: repo })
+  const r = await run(["init"], { cwd: repo })
   assert.equal(r.code, 0, r.out)
   const cfg2 = JSON.parse(readFileSync(join(repo, ".figs/config.json"), "utf8"))
   assert.equal(cfg2.agentId, cfg1.agentId, "re-init must reuse the agentId")
+  assert.equal(cfg2.workspaceId, UUID, "re-init must NOT unlink")
   assert.equal(readFileSync(join(repo, ".figs/agent.json"), "utf8"), charter)
 })
 
-test("init with no --workspace auto-selects the only workspace", async () => {
+// ---------- link (the connector) ------------------------------------------
+
+test("link --workspace <uuid> writes the destination without login (unverified)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["link", "--workspace", UUID], { cwd: repo }) // no token
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /unverified until your first/)
+  const cfg = JSON.parse(readFileSync(join(repo, ".figs/config.json"), "utf8"))
+  assert.equal(cfg.workspaceId, UUID)
+  assert.match(cfg.agentId, /^[0-9a-f-]{36}$/, "link preserves identity")
+})
+
+test("link with no flag auto-selects the only workspace", async () => {
   mock.workspaces = [{ id: UUID, slug: "acme", name: "Acme", role: "owner" }]
   const repo = newRepo()
-  const r = await run(["init"], { cwd: repo, token: "t" })
+  await run(["init"], { cwd: repo })
+  const r = await run(["link"], { cwd: repo, token: "t" })
   assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /using workspace acme \(Acme\)/)
+  assert.match(r.out, /linking to acme \(Acme\)/)
   const cfg = JSON.parse(readFileSync(join(repo, ".figs/config.json"), "utf8"))
   assert.equal(cfg.workspaceId, UUID)
 })
 
-test("init with several workspaces lists them and exits 1", async () => {
+test("link with several workspaces lists them and exits 1", async () => {
   mock.workspaces = [
     { id: UUID, slug: "acme", name: "Acme", role: "owner" },
     { id: UUID.replace("1111", "9999"), slug: "globex", name: "Globex", role: "member" },
   ]
-  const r = await run(["init"], { cwd: newRepo(), token: "t" })
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["link"], { cwd: repo, token: "t" })
   assert.equal(r.code, 1)
   assert.match(r.out, /which workspace\?/)
   assert.match(r.out, /--workspace acme/)
   assert.match(r.out, /--workspace globex/)
 })
 
-test("init with zero workspaces says to create one and exits 1", async () => {
+test("link with zero workspaces says to create one and exits 1", async () => {
   mock.workspaces = []
-  const r = await run(["init"], { cwd: newRepo(), token: "t" })
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["link"], { cwd: repo, token: "t" })
   assert.equal(r.code, 1)
   assert.match(r.out, /no workspaces yet/)
 })
 
-// ---------- doctor (offline checks) ----------------------------------------
+test("link --workspace <slug> needs login", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["link", "--workspace", "acme"], { cwd: repo }) // no token
+  assert.equal(r.code, 1)
+  assert.match(r.out, /needs `figs login`|workspace UUID/)
+})
+
+test("link before init points you to init first", async () => {
+  const r = await run(["link", "--workspace", UUID], { cwd: newRepo() })
+  assert.notEqual(r.code, 0)
+  assert.match(r.out, /figs init/)
+})
+
+// ---------- doctor (offline, account-free conformance) ---------------------
 
 test("doctor refuses a charter that still has template placeholders", async () => {
   const repo = newRepo()
-  await run(["init", "--workspace", UUID], { cwd: repo })
-  const r = await run(["doctor"], { cwd: repo, token: "t" })
+  await run(["init"], { cwd: repo })
+  const r = await run(["doctor"], { cwd: repo }) // no token, not linked — still validates locally
   assert.equal(r.code, 1)
   assert.match(r.out, /template placeholders/)
+})
+
+test("doctor passes offline with no account once the charter is filled", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  writeFileSync(
+    join(repo, ".figs/agent.json"),
+    JSON.stringify({ name: "TestAgent", mandate: "tests the CLI" }),
+  )
+  const r = await run(["doctor"], { cwd: repo }) // no token, not linked
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /passes local conformance/)
+  assert.match(r.out, /server validation skipped/)
 })
 
 // ---------- push ------------------------------------------------------------
 
 async function pushableRepo() {
   const repo = newRepo()
-  await run(["init", "--workspace", UUID], { cwd: repo })
+  await run(["init"], { cwd: repo })
+  await run(["link", "--workspace", UUID], { cwd: repo }) // logged out → unverified, but linked
   writeFileSync(
     join(repo, ".figs/agent.json"),
     JSON.stringify({ name: "TestAgent", mandate: "tests the CLI" }),
@@ -369,12 +430,12 @@ test("report --no-push saves locally and skips the network", async () => {
   assert.equal(mock.lastIngest, null, "no ingest call expected")
 })
 
-test("report with a failing push still saves locally and says so", async () => {
-  const repo = await pushableRepo()
-  const r = await run(["report", "--result", "kept"], { cwd: repo }) // no token → push fails
-  assert.equal(r.code, 1)
+test("report on a linked repo with no token records locally and exits 2", async () => {
+  const repo = await pushableRepo() // linked
+  const r = await run(["report", "--result", "kept"], { cwd: repo }) // no token → can't publish
+  assert.equal(r.code, 2, r.out) // 2 = recorded locally, publish failed (retry push)
   assert.match(r.out, /not logged in/)
-  assert.match(r.out, /saved locally/)
+  assert.match(r.out, /recorded locally — do NOT re-run/)
   assert.equal(lastLine(repo, "runs.jsonl").result, "kept")
 })
 
@@ -722,12 +783,12 @@ test("checkpoint requires --id and --note, teaching each fix", async () => {
   assert.match(noNote.out, /needs --note/)
 })
 
-test("a checkpoint whose push fails says loudly it protects nothing yet", async () => {
-  const repo = await pushableRepo()
+test("a linked checkpoint whose push fails says loudly it protects nothing yet", async () => {
+  const repo = await pushableRepo() // linked
   // no token → the auto-push fails; the local save alone must not read as success
   const r = await run(["checkpoint", "--id", "job-crash", "--note", "underway"], { cwd: repo })
-  assert.equal(r.code, 1)
-  assert.match(r.out, /NOT protecting the job yet/)
+  assert.equal(r.code, 2, r.out) // 2 = recorded locally, publish failed
+  assert.match(r.out, /NOT protecting the job remotely yet/)
   assert.match(r.out, /figs push/)
   assert.equal(lastLine(repo, "runs.jsonl").id, "job-crash", "still saved locally")
 })
@@ -1204,4 +1265,127 @@ test("resolve falls back to via human when the inbox has nothing (offline path)"
   assert.equal(r.code, 0, r.out)
   const fold = lastLine(repo, "asks.jsonl")
   assert.deepEqual(unstampResolution(fold.resolution), { by: "Sarah", via: "human" })
+})
+
+// ============================================================================
+// Redesign — step 1: the state model + surface (local-first, exit codes,
+// link, peek-don't-use, announce, reference checks, the no-account audit).
+// ============================================================================
+
+const OFFLINE = { env: { FIGS_ENDPOINT: "http://127.0.0.1:1" } } // refused fast — nothing should reach it
+
+test("report in local mode records and exits 0, never calling the server", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  mock.lastIngest = null
+  const r = await run(["report", "--id", "j1", "--result", "done"], { cwd: repo }) // no token, not linked
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /local mode — `figs link` to publish/)
+  assert.equal(mock.lastIngest, null, "local mode must not call the server")
+  assert.equal(lastLine(repo, "runs.jsonl").result, "done")
+})
+
+test("report announces new-vs-fold for an explicit --id", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const a = await run(["report", "--id", "recon", "--result", "first"], { cwd: repo })
+  assert.match(a.out, /new job opened: recon/)
+  const b = await run(["report", "--id", "recon", "--result", "second"], { cwd: repo })
+  assert.match(b.out, /folded onto existing job recon/)
+})
+
+test("report with no --id prints no new-vs-fold line (auto-id is always new)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["report", "--result", "x"], { cwd: repo })
+  assert.ok(!/new job opened|folded onto/.test(r.out), r.out)
+})
+
+test("ask announces new-vs-fold for an explicit --id (a revision folds)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const a = await run(["ask", "needs-decision", "--id", "q1", "--title", "first"], { cwd: repo })
+  assert.match(a.out, /new ask opened: q1/)
+  const b = await run(["ask", "needs-decision", "--id", "q1", "--title", "revised"], { cwd: repo })
+  assert.match(b.out, /folded onto existing ask q1/)
+})
+
+test("checkpoint reopening a settled job warns (legal, but nudge a new id)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["report", "--id", "j", "--result", "done"], { cwd: repo }) // settles
+  const r = await run(["checkpoint", "--id", "j", "--note", "more work"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /reopening a settled job/)
+})
+
+test("--run warns on a dangling link but never blocks", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["ask", "needs-decision", "--title", "t", "--run", "nope"], { cwd: repo })
+  assert.equal(r.code, 0, r.out) // warn, not die
+  assert.match(r.out, /--run "nope" isn't a job in this journal/)
+})
+
+test("--unit warns when it isn't a charter unit (once units exist)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  writeFileSync(
+    join(repo, ".figs/agent.json"),
+    JSON.stringify({ name: "A", mandate: "m", units: [{ id: "acme", name: "Acme" }] }),
+  )
+  const r = await run(["report", "--id", "j", "--result", "x", "--unit", "acmee"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /--unit "acmee" isn't one of your charter units/)
+})
+
+test("version prints offline (no --check ⇒ no network)", async () => {
+  const r = await run(["version"], OFFLINE)
+  assert.equal(r.code, 0)
+  assert.ok(r.out.includes(VERSION), r.out)
+})
+
+test("a verb in a subdir with no .figs peeks at the parent but never adopts it", async () => {
+  const root = newRepo()
+  await run(["init"], { cwd: root })
+  writeFileSync(join(root, ".figs/agent.json"), JSON.stringify({ name: "Recruiter", mandate: "m" }))
+  const sub = join(root, "packages", "sub")
+  mkdirSync(sub, { recursive: true })
+  const r = await run(["report", "--result", "x"], { cwd: sub })
+  assert.notEqual(r.code, 0)
+  assert.match(r.out, /found one at/)
+  assert.match(r.out, /Recruiter/)
+  assert.match(r.out, /figs init/)
+})
+
+test("status reports local mode before linking, linked after", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const a = await run(["status", "--json"], { cwd: repo })
+  assert.equal(JSON.parse(a.out).mode, "local")
+  await run(["link", "--workspace", UUID], { cwd: repo })
+  const b = await run(["status", "--json"], { cwd: repo })
+  assert.equal(JSON.parse(b.out).mode, "linked")
+})
+
+// The no-account audit — the release gate in one test. Every local verb must
+// work offline with no credentials and match the §3 exit-code table.
+test("no-account audit: the local surface works offline with no credentials", async () => {
+  const repo = newRepo()
+  assert.equal((await run(["init"], { cwd: repo, ...OFFLINE })).code, 0, "init")
+  writeFileSync(join(repo, ".figs/agent.json"), JSON.stringify({ name: "Aud", mandate: "audit" }))
+  const cases = [
+    [["status"], 0],
+    [["status", "--json"], 0],
+    [["version"], 0],
+    [["doctor"], 0],
+    [["report", "--id", "j", "--result", "ok"], 0],
+    [["checkpoint", "--id", "j2", "--note", "wip"], 0],
+    [["ask", "needs-decision", "--title", "q"], 0],
+    [["push"], 1], // not linked → structural error (fix: figs link)
+  ]
+  for (const [args, code] of cases) {
+    const r = await run([...args], { cwd: repo, ...OFFLINE })
+    assert.equal(r.code, code, `${args.join(" ")} → exit ${r.code}\n${r.out}`)
+  }
 })
