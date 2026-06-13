@@ -46,20 +46,17 @@ it *better* (verified answers, multiplayer, org chart) — never *possible*. Eve
 
 **Release gate — the no-account audit:** before each release, run every verb in a fresh dir
 with no `~/.figs/credentials.json`, no `FIGS_TOKEN`, and network off. Each must match the
-state-model table in `REDESIGN.md` §3 (after the redesign ships: in `README.md`). A verb that
-exits non-zero in local mode without an unmeetable declared intent is a release blocker.
+exit-code model in `README.md`; the gate is automated as the **`no-account audit`** test in
+`figs.test.mjs`. A verb that exits non-zero in local mode without an unmeetable declared intent
+is a release blocker.
 
-## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
+## Status
 
-**CLI + docs are complete on `redesign/v1` (108 tests green).** Done + committed: steps 1, 2
-(`--json` envelope), 3 (core + attachments + the linked down-sync, reviewed against the app's
-shipped `GET /api/messages`), 4 (auth), help-regroup, **SPEC v2**, **README flip**, **GUIDE.md
-v2 rewrite** (lifecycle, inbox-cadence, job-history-home, anchor) + CONTRACT/init reframe. The
-whole loop — local AND linked — works end to end. **Only ship-gated work remains:**
-
-- [ ] **Ship** (needs Wayne's OK — outward/irreversible): bump `package.json` → 1.0.0, merge `redesign/v1` → main, publish `@figs-so/cli@1.0.0`. On merge, `/llms.txt` auto-serves the rewritten GUIDE.md (confirm the app redirect targets the repo guide).
-- [ ] **Cross-repo onramps**: `create-openfigs` outro → `figs init` first (tiny; gated on the 1.0.0 publish + an npm release). **`openfigs` template — HOLD**: Wayne is weighing making openfigs a single employee (not a fleet); don't touch its template until that's decided.
-- [ ] **HQ `docs/architecture.md`** — update at ship (incl. the quiet "a conforming server is substitutable" line).
+**figs-spec v2 / CLI 1.0.0 — the local-first wave.** The CLI is a complete product with no
+account (init/report/checkpoint/ask/answer/inbox/show/close/doctor all work offline); linking
+adds publishing + the org chart + the human-reply down-sync. The eight contract rules above are
+the durable guardrails — they were the whole point of the v2 redesign, and they must not drift.
+The protocol of record is `SPEC.md`; the agent-facing guide is `GUIDE.md` (served at `/llms.txt`).
 
 ## Working rules
 
