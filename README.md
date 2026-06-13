@@ -28,49 +28,54 @@ silently — it **hands off** to you.
 We don't reinvent the agent. Your agent is already Claude Code / Codex / Cursor, and it's only getting
 better. Figs is the human-facing layer on top: the one place a whole team can see the fleet.
 
-## Quickstart (60 seconds)
+## Quickstart (30 seconds, no signup)
 
-Run these from your agent's repo (or have the agent run them):
+Run this from your agent's repo (or have the agent run it) — **no account needed:**
 
 ```bash
-npx @figs-so/cli@latest login                    # opens your browser — sign up & approve (the agent never sees a token)
-npx @figs-so/cli@latest init                     # scaffolds .figs/ — uses your only workspace (--workspace <slug> to pick)
-# fill in .figs/agent.json — its name, mandate, what it owns (figs doctor flags any placeholders)
-npx @figs-so/cli@latest push                     # publish → it appears in your org chart
+npx @figs-so/cli@latest init        # scaffold .figs/ here — purely local, mints a stable agent id
+# fill in .figs/agent.json — its name, mandate, what it owns (figs doctor checks it)
 ```
 
-That's it — your agent now shows up at **[app.figs.so](https://app.figs.so)**. No instrumentation, no
-SDK in your agent's code. From there you decide, deliberately, how much of its real work to surface —
-and day to day the agent records itself in one stroke per event: `figs checkpoint` (a job opens /
-progresses) · `figs report` (its outcome) · `figs ask` (needs a human) · `figs resolve` (close an
-ask). Each pushes itself.
+That's the whole setup. Your agent now has, on plain local files: an identity, a **crash-recoverable
+work journal** (`figs checkpoint` / `figs report` under stable job ids — the next session picks up what
+the last one left in flight), structured handoffs (`figs ask` → `figs answer` → `figs close`), and
+offline validation (`figs doctor`). It works with zero account, forever.
+
+**See it with your team — when you want to:**
+
+```bash
+npx @figs-so/cli@latest login       # one-time browser approve (the agent never sees a token)
+npx @figs-so/cli@latest link        # connect this .figs/ to a workspace
+npx @figs-so/cli@latest push        # publish → your fleet shows up at app.figs.so
+```
+
+Linking loses nothing — `push` publishes everything recorded since day one.
 
 ## How it works
 
-- **Local-first, one-way.** Your agent writes a small **`.figs/`** folder and runs `figs push`. Figs is a
-  **read-only mirror** — it never writes back into your agent or your repo.
-- **Two things only:** *structured state* (the agent's charter + its runs, asks, and artifacts) and
-  *rendered artifacts* (reports/charts shown in a sandboxed viewer). No display DSL to learn.
-- **Identity is the agent's own.** An agent generates a UUID once; that UUID *is* its identity. Many people
-  can run the same agent (it's a repo) and their pushes aggregate.
-- **You read it on Figs.** The hosted app turns the pushes into an org chart of your AI employees, a glance
-  view per agent, and a **needs-you inbox** — the handoffs an employee flags for a human, answered when you
-  have time (a message, not a blocking gate).
+- **Local-first, account-optional.** Your agent writes a small **`.figs/`** folder and works entirely
+  offline. Linking to the hosted app is a separate, optional step; a reader is a **mirror for humans**,
+  never an authority over your files.
+- **Agent ledgers up, replies down.** The agent's runs/asks publish one-way *up*; a human's replies
+  (answers/verdicts) come *back* through one file (`messages.jsonl`) — the agent acts on them and closes
+  the ask, citing the reply.
+- **Two content modes, no display language:** *structured state* (the charter + runs/asks/replies) and
+  *attachments* (files shown inline or offered for download). No DSL to learn.
+- **Identity is the agent's own.** It generates a UUID once; that UUID *is* its identity. Many people can
+  run the same agent (it's a repo) and their pushes aggregate.
+- **You read it on Figs.** The hosted app turns pushes into an org chart of your AI employees, a glance
+  view per agent, and a **needs-you inbox** — the handoffs flagged for a human, multiplayer across the team.
 
-The full `.figs` contract is specified in **[`SPEC.md`](./SPEC.md)** (`figs-spec v1`). Anyone can implement
-it — that's the point of an open protocol.
+The full `.figs` contract is specified in **[`SPEC.md`](./SPEC.md)** (`figs-spec v2`). Anyone can
+implement it — that's the point of an open protocol.
 
 ### The local-first contract
 
 **The CLI is a complete product with zero account.** `figs init` alone gives an agent identity, a
-crash-recoverable work journal (checkpoint/report under stable job ids), structured asks, and offline
-validation — all in plain files. An account adds the hosted layer: publishing, the org chart, and
-verified, attributed human answers. **Remote is better, never required** — and linking later loses
-nothing: `figs push` publishes everything recorded since day one.
-
-> **Honest status:** today's CLI doesn't fully honor this contract yet — `init` and `doctor` still
-> assume an account, and offline verbs exit non-zero. The redesign closing these gaps is specified in
-> [`REDESIGN.md`](./REDESIGN.md); this note disappears when it ships.
+crash-recoverable work journal, structured asks + the answer/close loop, and offline validation — all
+in plain files on this machine. Linking adds the hosted layer: publishing, the org chart, and
+**verified, multiplayer** replies (your whole team, attributed). **Linked is better, never required.**
 
 ### The CLI
 
@@ -81,22 +86,31 @@ non-interactive, `--json` on read commands, and errors that say what to do next.
 are shorthand for exactly that (always current, no version drift). Prefer a real local command?
 `npm i -g @figs-so/cli`, then `figs <cmd>` directly.
 
+**Local (no account needed):**
+
 | Command | What |
 |---|---|
-| `figs login` / `logout` | device-flow browser approve / remove local token |
-| `figs workspaces [--json]` | list your workspaces (create one in the web app) |
-| `figs init [--workspace <slug>]` | generate identity + write `.figs/` (omit the flag: uses your only workspace, else lists them) |
-| **`figs inbox [<ask-id>]`** | start every session here — your humans' answers/verdicts, verbatim, with the next command per ask, plus your unfinished (in-flight) jobs; with an id: the full zero-context handoff package (thread + artifacts restored) |
-| **`figs checkpoint --id <job> --note '…'`** | save a job's progress mid-flight — the **first checkpoint opens the job** (`state: in-flight`), so a crash leaves a recoverable stub the next session finds in the inbox; `--trigger` records what set the sitting in motion |
-| **`figs report --result '…'`** | file a job's outcome — **one job, one stable `--id`** (re-reporting an id folds progress onto that job's row); settles the job (`state: settled`), stamps the timestamp, `--attach`es artifacts, pushes itself |
-| **`figs ask <type> --title '…'`** | raise a self-contained ask (`needs-decision` · `sign-off` · `fyi`) — options/details/attachments, pushed so a human sees it |
-| **`figs resolve <ask-id>`** | close an ask — `--chosen` verbatim-checked against its options, `--withdrawn` for the un-ask |
-| `figs push` | the bare transport — the verbs call it automatically; type it yourself after hand-edits or `--no-push` |
-| `figs doctor` | validate `.figs/` against the spec without pushing — the conformance check for hand-authored or non-CLI setups |
-| `figs status [--json]` | login / workspace / agent state |
-| `figs help [<command>]` | usage (`-h`/`--help` on any command; `-v` for version) |
+| **`figs init`** | scaffold `.figs/` here — purely local, mints a stable agent id; zero flags, never touches the network |
+| **`figs checkpoint --id <job> --note '…'`** | save a job's progress mid-flight — the **first checkpoint opens the job** (`state: in-flight`), so a crash leaves a recoverable stub the next session finds in the inbox |
+| **`figs report --result '…'`** | settle a job — **one job, one stable `--id`** (re-reporting folds onto its row); `--attach` files; auto-pushes when linked |
+| **`figs ask <type> --title '…'`** | raise a self-contained ask (`question` · `sign-off`) — options/details/attachments |
+| **`figs answer <ask-id> --by '…'`** | record your human's out-of-band reply, verbatim (you run this, not them) — `--chosen`/`--text`, or `--approve`/`--request-changes`/`--reject` |
+| **`figs inbox [<ask-id>]`** | start every session here — open asks + their replies + your unfinished jobs, each with the next command (`<ask-id>` → `figs show`) |
+| **`figs show <id>`** | magnify one ask (its reply thread) or job (its checkpoint trail) + attachments |
+| **`figs close <ask-id>`** | close an ask — derives the outcome from the reply on file and cites it; `--run <job>` links the work, `--withdrawn` for the un-ask |
+| `figs doctor` | validate `.figs/` against the spec — runs **account-free** |
+| `figs status [--json]` · `figs version` · `figs help [<cmd>]` | local/linked + agent state · version · usage |
 
-Override the endpoint for local dev with `FIGS_ENDPOINT` (e.g. `http://localhost:3000`).
+**Connected (one-time login + a workspace):**
+
+| Command | What |
+|---|---|
+| `figs login` / `logout` | device-flow browser approve / remove the local token (per endpoint) |
+| `figs link [--workspace <slug\|uuid>]` | connect `.figs/` to a workspace so `figs push` can publish |
+| `figs push` | publish the spine + attachments + replies; the writing verbs call it automatically when linked |
+
+Exit codes: `0` recorded · `1` nothing written (fix the input) · `2` recorded locally, publish failed
+(run `figs push`, never re-run the verb). Override the endpoint with `FIGS_ENDPOINT`.
 
 ## What Figs is — and is NOT
 
@@ -107,8 +121,9 @@ that makes a fleet of agents *legible* to a whole team.
 - ❌ **An agent / framework / orchestrator** — we wrap the dominant ones; we don't compete with them.
 - ❌ **Observability / a trace viewer** — the frame is an *employee reporting to humans*, not telemetry
   for engineers.
-- ❌ **A control plane (yet)** — today it's one-way (report + hand off). Two-way (answer-down, sign-off) is
-  on the roadmap. To act on a handoff today, you still go to the agent's own console.
+- ❌ **A control plane / orchestrator** — the loop is report + hand off + *answer back* (the human's
+  reply flows to the agent, which acts and closes the ask). Figs carries the decision; it doesn't drive
+  the agent's execution.
 
 > **Honest status:** Figs is **early** and in active dogfooding. Today's value is *visibility/legibility*
 > at fleet scale — not a tamper-proof audit trail (agent state is self-reported). We're building in the
