@@ -46,17 +46,17 @@ it *better* (verified answers, multiplayer, org chart) — never *possible*. Eve
 
 **Release gate — the no-account audit:** before each release, run every verb in a fresh dir
 with no `~/.figs/credentials.json`, no `FIGS_TOKEN`, and network off. Each must match the
-state-model table in `REDESIGN.md` §3 (after the redesign ships: in `README.md`). A verb that
-exits non-zero in local mode without an unmeetable declared intent is a release blocker.
+exit-code model in `README.md`; the gate is automated as the **`no-account audit`** test in
+`figs.test.mjs`. A verb that exits non-zero in local mode without an unmeetable declared intent
+is a release blocker.
 
-## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
+## Status
 
-- [ ] `figs init` requires an account (no local-mode init; `workspaceId` mandatory everywhere).
-- [ ] `figs doctor` dies "not logged in" after local checks pass.
-- [ ] Writing verbs exit 1 when not logged in (no local-mode exit-0 path without `--no-push`).
-- [ ] Error chains end at "create an account"; README/onramps lead with `login`.
-- [ ] `figs inbox` is fully remote — even in-flight jobs (local data) are fetched from the server; no local message channel (`messages.jsonl` + `figs answer`).
-- [ ] Auth: custom `x-figs-token` header (→ `Authorization: Bearer`); single endpoint-blind token in `~/.figs/credentials.json` (→ keyed by endpoint origin).
+**figs-spec v2 / CLI 1.0.0 — the local-first wave.** The CLI is a complete product with no
+account (init/report/checkpoint/ask/answer/inbox/show/close/doctor all work offline); linking
+adds publishing + the org chart + the human-reply down-sync. The eight contract rules above are
+the durable guardrails — they were the whole point of the v2 redesign, and they must not drift.
+The protocol of record is `SPEC.md`; the agent-facing guide is `GUIDE.md` (served at `/llms.txt`).
 
 ## Working rules
 
