@@ -54,6 +54,7 @@ before(async () => {
       if (req.url === "/api/ingest") {
         mock.lastIngest = {
           token: req.headers["x-figs-token"],
+          authorization: req.headers["authorization"],
           body: JSON.parse(body),
         }
         return send(200, { ok: true })
@@ -1294,4 +1295,58 @@ test("attach rejects an unsupported type, accepts the expanded download-only set
   writeFileSync(join(repo, "data.csv"), "a,b\n1,2")
   const ok = await run(["report", "--result", "y", "--attach", join(repo, "data.csv")], { cwd: repo })
   assert.equal(ok.code, 0, ok.out)
+})
+
+// ============================================================================
+// Redesign — step 4: auth (Bearer header, per-endpoint credentials)
+// ============================================================================
+
+test("push sends Authorization: Bearer (and the legacy header through the transition)", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo()
+  const r = await run(["push"], { cwd: repo, token: "tok-xyz" })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(mock.lastIngest.authorization, "Bearer tok-xyz")
+  assert.equal(mock.lastIngest.token, "tok-xyz", "legacy x-figs-token still sent for dual-accept")
+})
+
+test("credentials are keyed by endpoint origin (a prod token never goes to a dev endpoint)", async () => {
+  // Log in to two different endpoints from the same HOME; each keeps its own token.
+  const home = mkdtempSync(join(tmpdir(), "figs-home-"))
+  const A = "https://app.figs.so"
+  const B = "http://127.0.0.1:9999"
+  await run(["login", "tok-prod"], { env: { HOME: home, FIGS_ENDPOINT: A } })
+  await run(["login", "tok-dev"], { env: { HOME: home, FIGS_ENDPOINT: B } })
+  const creds = JSON.parse(readFileSync(join(home, ".figs/credentials.json"), "utf8"))
+  assert.equal(creds[A].token, "tok-prod")
+  assert.equal(creds[B].token, "tok-dev")
+  rmSync(home, { recursive: true, force: true })
+})
+
+test("the legacy single-token credentials file migrates to the default endpoint", async () => {
+  const home = mkdtempSync(join(tmpdir(), "figs-home-"))
+  mkdirSync(join(home, ".figs"), { recursive: true })
+  writeFileSync(join(home, ".figs/credentials.json"), JSON.stringify({ token: "legacy-tok" }))
+  // status against the default endpoint should pick up the migrated token.
+  const r = await run(["status", "--json"], { env: { HOME: home, FIGS_ENDPOINT: "https://app.figs.so" } })
+  assert.equal(r.code, 0, r.out)
+  // It tried to use the token (can't reach prod in the test, but it's "logged in" intent):
+  // simplest robust check — logging in elsewhere preserves the migrated default token.
+  await run(["login", "new-dev"], { env: { HOME: home, FIGS_ENDPOINT: "http://127.0.0.1:9999" } })
+  const creds = JSON.parse(readFileSync(join(home, ".figs/credentials.json"), "utf8"))
+  assert.equal(creds["https://app.figs.so"].token, "legacy-tok", "legacy token re-keyed to the default endpoint")
+  assert.equal(creds["http://127.0.0.1:9999"].token, "new-dev")
+  rmSync(home, { recursive: true, force: true })
+})
+
+test("logout removes only the current endpoint's token, keeps the others", async () => {
+  const home = mkdtempSync(join(tmpdir(), "figs-home-"))
+  await run(["login", "tok-prod"], { env: { HOME: home, FIGS_ENDPOINT: "https://app.figs.so" } })
+  await run(["login", "tok-dev"], { env: { HOME: home, FIGS_ENDPOINT: "http://127.0.0.1:9999" } })
+  const r = await run(["logout"], { env: { HOME: home, FIGS_ENDPOINT: "http://127.0.0.1:9999" } })
+  assert.equal(r.code, 0, r.out)
+  const creds = JSON.parse(readFileSync(join(home, ".figs/credentials.json"), "utf8"))
+  assert.equal(creds["https://app.figs.so"].token, "tok-prod", "prod token kept")
+  assert.equal(creds["http://127.0.0.1:9999"], undefined, "dev token removed")
+  rmSync(home, { recursive: true, force: true })
 })

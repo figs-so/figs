@@ -523,15 +523,37 @@ function askExistsLocally(askId) {
     readJsonl("messages.jsonl").some((m) => m.ask === askId)
   )
 }
-function getToken() {
-  return process.env.FIGS_TOKEN || readJson(globalCreds, {}).token
-}
 function resolveEndpoint() {
   const cfg = readJson(join(repoDir, "config.json"), {})
   return (process.env.FIGS_ENDPOINT || cfg.endpoint || DEFAULT_ENDPOINT).replace(
     /\/+$/,
     "",
   )
+}
+// ---------- credentials, keyed by endpoint origin --------------------------
+// One token per endpoint origin so a prod token is never sent to a localhost
+// dev endpoint (the old single-token file's real bug) and prod + dev can coexist.
+// File shape: { "https://app.figs.so": { "token": "…" }, … }. The pre-1.0 shape
+// was a bare { "token": "…" } — migrated on read to the default endpoint.
+/** Canonical origin (scheme://host:port, no path/trailing slash) of a URL. */
+function originOf(url) {
+  try {
+    return new URL(url).origin
+  } catch {
+    return String(url).replace(/\/+$/, "")
+  }
+}
+/** Load the credentials file, migrating the legacy bare-token shape in memory. */
+function loadCreds() {
+  const raw = readJson(globalCreds, {})
+  if (typeof raw.token === "string") {
+    // Legacy single token — it was always the default endpoint's.
+    return { [originOf(DEFAULT_ENDPOINT)]: { token: raw.token } }
+  }
+  return raw
+}
+function getToken() {
+  return process.env.FIGS_TOKEN || loadCreds()[originOf(resolveEndpoint())]?.token
 }
 
 // ---------- the state model -------------------------------------------------
@@ -581,6 +603,17 @@ function noFigsHint() {
   return "no .figs/ here — run `figs init` first"
 }
 
+/**
+ * Auth headers for a token. Standard `Authorization: Bearer` is the contract;
+ * we ALSO send the legacy `x-figs-token` through the transition so a 1.0 CLI
+ * works against an app that hasn't shipped Bearer yet. Drop `x-figs-token` here
+ * once the app requires Bearer (next MIN_CLI bump).
+ */
+function authHeaders(token) {
+  if (!token) return {}
+  return { authorization: `Bearer ${token}`, "x-figs-token": token }
+}
+
 const REQUEST_TIMEOUT_MS = 30000
 /** `fetch` with a hard timeout so a hung server never stalls the agent. */
 async function fetchT(url, opts = {}) {
@@ -606,7 +639,7 @@ async function request(method, path, body, token = getToken()) {
       method,
       headers: {
         "content-type": "application/json",
-        ...(token ? { "x-figs-token": token } : {}),
+        ...authHeaders(token),
       },
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -741,9 +774,13 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 function saveToken(token) {
+  // Key the token under the endpoint origin we're logging into; preserve tokens
+  // for other origins (migrating the legacy shape in the process).
+  const creds = loadCreds()
+  creds[originOf(resolveEndpoint())] = { token }
   // A bearer token must not be group/other-readable: dir 0700, file 0600.
   mkdirSync(globalDir, { recursive: true, mode: 0o700 })
-  writeFileSync(globalCreds, JSON.stringify({ token }, null, 2) + "\n", { mode: 0o600 })
+  writeFileSync(globalCreds, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 })
   // Enforce perms even if the dir/file pre-existed with looser modes (mode on
   // write only applies at creation).
   try {
@@ -825,15 +862,22 @@ async function login(token) {
  * can't be removed here (unset the env var to fully log out).
  */
 function logout() {
-  if (existsSync(globalCreds)) {
+  const origin = originOf(resolveEndpoint())
+  const creds = loadCreds()
+  if (creds[origin]) {
+    delete creds[origin]
     try {
-      rmSync(globalCreds)
+      if (Object.keys(creds).length) {
+        writeFileSync(globalCreds, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 })
+      } else if (existsSync(globalCreds)) {
+        rmSync(globalCreds) // nothing left — remove the file entirely
+      }
     } catch (e) {
-      die(`could not remove ${globalCreds}: ${e?.message || e}`)
+      die(`could not update ${globalCreds}: ${e?.message || e}`)
     }
-    console.log("figs: ✓ logged out — removed ~/.figs/credentials.json")
+    console.log(`figs: ✓ logged out of ${origin} (other endpoints' tokens, if any, are kept)`)
   } else {
-    console.log("figs: not logged in — no ~/.figs/credentials.json to remove")
+    console.log(`figs: not logged in to ${origin} — nothing to remove`)
   }
   if (process.env.FIGS_TOKEN) {
     console.warn(
@@ -2057,7 +2101,7 @@ async function doPush() {
   try {
     res = await fetchT(`${base}/api/ingest`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-figs-token": token },
+      headers: { "content-type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({ workspaceId: config.workspaceId, agent, runs, asks, messages }),
     })
   } catch (e) {
@@ -2112,7 +2156,7 @@ async function pushArtifacts(base, token, config) {
     try {
       res = await fetchT(`${base}/api/artifacts/upload`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-figs-token": token },
+        headers: { "content-type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({
           workspaceId: config.workspaceId,
           agentId: config.agentId,
