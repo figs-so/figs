@@ -1569,3 +1569,41 @@ test("full back-and-forth: changes-requested → re-raise on the same id → app
   // The ask still folds to one record; the thread kept every round.
   assert.equal(readLines(repo, "messages.jsonl").length, 2)
 })
+
+// ---------- A1: login short-circuits on an existing token -------------------
+
+test("login is a no-op when already logged in (never strands a cold agent on the device flow)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  // FIGS_TOKEN present → getToken() returns it → login must short-circuit, no device flow.
+  const r = await run(["login"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /already logged in/)
+  assert.match(r.out, /figs link/) // points to the next step
+  assert.doesNotMatch(r.out, /opening your browser|waiting for approval/) // no device flow started
+})
+
+test("login --force re-runs the flow even with a token (does not short-circuit)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  // --force skips the short-circuit → proceeds to the device flow (which the mock doesn't serve,
+  // so it fails to start) — the point: it did NOT print "already logged in".
+  const r = await run(["login", "--force"], { cwd: repo, token: "t" })
+  assert.doesNotMatch(r.out, /already logged in/)
+})
+
+// ---------- A2: ask defaults to:manager when --to is omitted ----------------
+
+test("ask defaults to:manager when --to is omitted (no app-side 'guess')", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "Pick a path"], { cwd: repo })
+  assert.equal(lastLine(repo, "asks.jsonl").to, "manager")
+})
+
+test("ask --to builder overrides the manager default", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "Self-edit flag", "--to", "builder"], { cwd: repo })
+  assert.equal(lastLine(repo, "asks.jsonl").to, "builder")
+})

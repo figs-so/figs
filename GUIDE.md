@@ -99,10 +99,12 @@ honest description of who you are.
 3. **Anchor Figs in your standing instructions** — see below. This is what keeps you visible past today.
 4. **`figs doctor`** — validates your charter, account-free. You're now a complete local employee.
 5. **To appear on the hosted app (optional, when your user wants it):**
-   `figs login` (you run it; it opens *your user's* browser to Approve — you never see the token;
-   a brand-new user is walked through sign-up there, so just run it) → `figs link` (connect to a
-   workspace; bare lists them, or `--workspace <slug>`) → `figs push`. Nothing recorded before
-   linking is lost — push sends it all. Confirm with `figs status`.
+   `figs login` is **interactive — it opens *your user's* browser to Approve** (you never see the
+   token; a brand-new user is walked through sign-up there). So run it **only with a human present**
+   (onboarding) — **a scheduled/triggered agent never logs in**; auth is the human's job. Already
+   set up on this machine? `figs status` says so — **skip straight to `figs link`** (don't re-run
+   `login`). The flow: `figs login` → `figs link` (connect to a workspace; bare lists them, or
+   `--workspace <slug>`) → `figs push`. Nothing recorded before linking is lost — push sends it all.
 
 ### Anchor Figs in the file you load every session
 
@@ -255,7 +257,14 @@ figs checkpoint --id recon-acme-2026-11 --note 'Statements pulled — matching n
 
 - **Your first checkpoint opens the job** (`state: "in-flight"`, verb-stamped). Make it the first
   act of any multi-sitting job. Checkpoint at **manager grain** (a step a human recognizes), never
-  per tool call; `--note` evolves the row's one-liner.
+  per tool call.
+- **A checkpoint is your work-journal, not just a progress ping.** `--note` is where your
+  **findings, calculations, assumptions, and heads-ups** live — *the process a manager wants to see,
+  and the context future-you needs to resume this in three months.* Rich, multi-line notes are
+  good; they accumulate in the job's trail (`figs show <id>`). This is also the home for anything
+  **fyi / for-the-record / "I'm assuming X"**: checkpoint it onto the job — don't raise an `ask`
+  (that's only for what genuinely needs a human, and it lands in their needs-you inbox), and don't
+  file a `report` (that *settles* the outcome).
 - **`figs report --id <same-id>` settles it** (`state: "settled"`) — including abandoning it
   (`--status warn --result 'abandoned — superseded by …'`). A report with no prior checkpoint is a
   single-sitting job born settled — the common case.
@@ -292,18 +301,28 @@ figs ask question --title 'No bridge rule for prefixed invoice numbers' \
   --to manager --run acme-2025-11
 ```
 
-- Required: `id`, `type`, `title`. **`type` is the answer contract** — what you want back:
-  **`question`** (an answer: a decision, an input, an unblock) · **`sign-off`** (a verdict:
-  approve / request-changes / reject). That's all — a stuck *job* is the run's `status` (not an
-  ask), and a for-the-record note is a settled report (not an ask).
+- Required: `id`, `type`, `title`. **`type` is the answer contract** — and it's the thing agents
+  most often get wrong, so be deliberate:
+  - **`sign-off`** = *approve an action that will take effect / write to the world* — post a record
+    to a system, send an email, file the charges. You made (or are about to make) a thing and need
+    it **blessed before it has effect**. The answer is a **verdict** (approve / request-changes / reject).
+  - **`question`** = *you need the human to pick a path, give an input, or unblock you* — nothing to
+    approve yet. The answer is an **answer** (an option or free text).
+  - **The test:** *is there an action/artifact to approve?* → sign-off; otherwise → question.
+  That's all — a stuck *job* is the run's `status` (not an ask), and a heads-up / for-the-record
+  note is a **`checkpoint`** on the job (or a settled `report`), **not** an ask (see Checkpoints).
 - **`to`**: `"manager"` (accountable for your *work*) · `"builder"` (maintains *you* — broken,
   creds, self-edit flags). Omit if genuinely either.
-- `found` / `need` — the case: what you saw, what you need back. `options[]` — **short, stable,
-  quotable** candidate answers (a reply cites one *verbatim*); the option is the label, context
-  lives in `found`/`details`. On a **sign-off**, options are answer paths (`"Approved — file the
-  15 ready charges"`), and **`--on-approve '<step>'`** (repeatable, ordered) states what approval
-  sets in motion — an approval authorizes exactly those steps; flag anything irreversible in the
-  step. `--attach` the **exact content to approve** (a verdict blesses what the ask carries).
+- `found` / `need` — **the case**: what you saw, what you need back. Write these so a *stranger*
+  (the human deciding, and the future session acting) can act from the ask **alone** — a bare title
+  is rarely enough. `options[]` — **short, stable, quotable** candidate answers (a reply cites one
+  *verbatim*) — and **only when there are discrete paths to choose**: a clear standalone question
+  (`how much did we spend in May?`) needs none. Options are *candidates, not a cage* — **your human
+  may also reply in free text**, so `found`/`need` must stand on their own. On a **sign-off**,
+  options are answer paths (`"Approved — file the 15 ready charges"`), and **`--on-approve '<step>'`**
+  (repeatable, ordered) states what approval sets in motion — an approval authorizes exactly those
+  steps; flag anything irreversible. `--attach` the **exact content to approve** (a verdict blesses
+  what the ask carries).
 - For long texts, `--stdin` a JSON object. The line it writes:
 
 ```json
@@ -419,6 +438,7 @@ out, per your CONTRACT.)*
   pick; message ids and your agent UUID are machine-minted — no command takes them.
 - **You own your identity.** The UUID in `config.json` is yours — commit it so everyone running
   this repo pushes to the *same* you.
-- **The token is the human's job.** Never enter or generate auth tokens yourself.
+- **The token is the human's job.** Never enter or generate auth tokens yourself; `figs login` is
+  a human-present onboarding step (it opens *their* browser) — not something a scheduled run does.
 - **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how to
   use it. Keep `agent.json` and `CONTRACT.md` honest and current.

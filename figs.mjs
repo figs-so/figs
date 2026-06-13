@@ -89,10 +89,11 @@ const COMMANDS = {
     eg: "figs status --json",
   },
   login: {
-    args: "[<token>]",
-    flags: [],
+    args: "[<token>] [--force]",
+    flags: ["--force"],
     desc: "log in — browser device-flow, or save a pasted token",
     more: [
+      "already logged in? it's a no-op that points you to `figs link` — pass --force to log in again.",
       "no arg → device flow: opens a browser for a human to approve (you never see the token).",
       "<token> → save a token you already have to ~/.figs/credentials.json.",
     ],
@@ -843,6 +844,17 @@ async function login(token) {
   if (token) {
     saveToken(token)
     console.log("figs: ✓ token saved to ~/.figs/credentials.json")
+    return
+  }
+
+  // Already logged in? Don't start a needless device flow — it strands a cold/headless
+  // agent with no human to approve. Token presence is enough to short-circuit; a stale
+  // token surfaces on the next link/push. `--force` re-runs the flow deliberately.
+  if (!hasFlag("--force") && getToken()) {
+    console.log(`figs: ✓ already logged in to ${originOf(resolveEndpoint())}`)
+    console.log(
+      "        `figs status` for details · `figs link` to connect a workspace · `figs login --force` to log in again",
+    )
     return
   }
 
@@ -1937,6 +1949,10 @@ async function askCmd() {
     const v = flag(f)
     if (v) ask[k] = v
   }
+  // Default an unaddressed ask to the manager (the work-accountable human) — the common
+  // case; `--to builder` is the explicit exception. Saves the reader from inferring ("guess").
+  // (Hand-authored JSONL may still omit `to` → unaddressed; the verb is sugar that defaults.)
+  if (!ask.to) ask.to = "manager"
   const options = flagAll("--option")
   if (options.length) ask.options = options
   for (const o of ask.options ?? []) {

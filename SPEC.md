@@ -156,9 +156,9 @@ edge of its autonomy.
 | Field | Type | Req | Meaning |
 |---|---|:--:|---|
 | `id` | string | ✓ | Stable id (upsert key). |
-| `type` | enum | ✓ | `question` \| `sign-off` — **the type is the answer contract**: *question* wants an answer (an option or free text), *sign-off* wants a verdict (approve / request-changes / reject). (`needs-decision` was renamed `question`; `fyi` was retired — a for-the-record note is a settled report, not an ask; `blocked` is the run's `status`, not an ask type.) |
+| `type` | enum | ✓ | `question` \| `sign-off` — **the type is the answer contract**: *question* wants an answer (an option or free text), *sign-off* wants a verdict (approve / request-changes / reject). (`needs-decision` was renamed `question`; `fyi` was retired — a for-the-record note / assumption / heads-up is a `checkpoint` on the job (or a settled `report`), not an ask; `blocked` is the run's `status`, not an ask type.) |
 | `status` | enum | | `"open"` (default) \| `"resolved"` (the need was met) \| `"withdrawn"` (the **agent** retracted it; nobody acted) \| `"rejected"` (a human declined it). **Rejected is terminal** on this id — re-raising is a new ask. |
-| `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder`). Absent = unaddressed. |
+| `to` | `"manager"` \| `"builder"` | | Who the ask is addressed to: the human accountable for the **work** (`manager`) or for the **machine** (`builder`). Absent = unaddressed; `figs ask` **defaults it to `manager`** (the common case) when omitted, so a reader needn't infer. |
 | `title` | string | ✓ | The ask, in one line. |
 | `unit` | string | | The `Unit.id` this concerns. |
 | `run` | string | | The run `id` this ask was raised during. **Optional** — asks also arise outside runs. |
