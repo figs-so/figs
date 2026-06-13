@@ -259,7 +259,8 @@ minimum CLI version requires Bearer.)
      "agent":    { /* agent.json */ },
      "runs":     [ /* runs.jsonl     */ ],   // optional
      "asks":     [ /* asks.jsonl     */ ],   // optional
-     "messages": [ /* messages.jsonl */ ]    // optional — transcribed replies the reader lacks
+     "messages": [ /* messages.jsonl */ ],   // optional — transcribed replies the reader lacks
+     "confirmRename": true                   // optional — `figs push --rename`: confirm a real name change
    }
    ```
 2. **Each attached file** → `POST {endpoint}/api/artifacts/upload`, base64-encoded, hash-verified.
@@ -270,7 +271,12 @@ server refuses a fold older than the record's stored close/settle (a stale machi
 and accepts a newer one (a legitimate reopen — the `warn` → `ok` evolution). **A push never re-homes an
 agent:** a `workspaceId` differing from the agent's registered home is rejected `409`
 `{ "error", "code": "agent_moved", "workspaceId"? }`; the agent recovers by setting
-`config.json#workspaceId` to the named workspace and pushing again.
+`config.json#workspaceId` to the named workspace and pushing again. **A push never silently
+re-identifies an agent:** a `name` differing from the one registered for that `agentId` is the
+fingerprint of a copied folder and is rejected `409` `{ "error", "code": "agent_renamed" }` — the
+agent rotates identity (`rm -rf .figs && figs init`) for a genuinely new agent, or sets
+`confirmRename` (`figs push --rename`) once to confirm a real rename. `name` is the signal because a
+copy-to-make-another always renames while role/mandate evolve legitimately; the check is `name` only.
 
 **Down — the reply sync.** Delivery is **agent-pulled**, never pushed into the repo: a reader exposes a
 read returning **this agent's human messages** (answers/verdicts), which the CLI merges into

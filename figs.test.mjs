@@ -1335,6 +1335,18 @@ test("push sends Authorization: Bearer (and the legacy header through the transi
   assert.equal(mock.lastIngest.token, "tok-xyz", "legacy x-figs-token still sent for dual-accept")
 })
 
+test("push omits confirmRename by default; --rename sets it (the one-time rename confirm)", async () => {
+  const repo = await pushableRepo()
+
+  mock.lastIngest = null
+  await run(["push"], { cwd: repo, token: "tok-xyz" })
+  assert.equal(mock.lastIngest.body.confirmRename, undefined, "a normal push carries no rename confirm")
+
+  mock.lastIngest = null
+  await run(["push", "--rename"], { cwd: repo, token: "tok-xyz" })
+  assert.equal(mock.lastIngest.body.confirmRename, true, "--rename confirms a genuine rename")
+})
+
 test("credentials are keyed by endpoint origin (a prod token never goes to a dev endpoint)", async () => {
   // Log in to two different endpoints from the same HOME; each keeps its own token.
   const home = mkdtempSync(join(tmpdir(), "figs-home-"))

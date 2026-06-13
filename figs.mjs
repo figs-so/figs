@@ -279,12 +279,16 @@ const COMMANDS = {
   },
   push: {
     args: "",
-    flags: [],
+    flags: ["--rename"],
     desc: "publish .figs/ — spine to /api/ingest, artifacts to /api/artifacts",
     more: [
       "Idempotent (records fold by id). Exits non-zero if an artifact upload is rejected.",
       "The writing verbs (report/ask/resolve) call this automatically — you only need it",
       "after hand-editing files, after --no-push, or to retry a failed auto-push.",
+      "--rename: confirm a genuine name change on an already-registered agent (one",
+      "time). The server refuses a name that doesn't match the registered one — it's",
+      "the fingerprint of a copied folder; if that's what happened, rotate identity",
+      "instead with `rm -rf .figs && figs init`, don't --rename.",
     ],
     eg: "figs push",
   },
@@ -2135,6 +2139,9 @@ async function doPush() {
   const asks = foldById(readJsonl("asks.jsonl"))
   // Messages are immutable events — sent whole (no fold); the server dedupes by id.
   const messages = readJsonl("messages.jsonl")
+  // One-time confirm that a name change on an already-registered id is a real
+  // rename, not a copied folder (the server's rename guard refuses it otherwise).
+  const confirmRename = hasFlag("--rename")
 
   // Local pre-flight — fail fast, offline, with teaching errors.
   const placeholders = findPlaceholders(agentJson)
@@ -2152,7 +2159,14 @@ async function doPush() {
     res = await fetchT(`${base}/api/ingest`, {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ workspaceId: config.workspaceId, agent, runs, asks, messages }),
+      body: JSON.stringify({
+        workspaceId: config.workspaceId,
+        agent,
+        runs,
+        asks,
+        messages,
+        ...(confirmRename ? { confirmRename: true } : {}),
+      }),
     })
   } catch (e) {
     // Network/timeout — transient; the records are safe locally.
@@ -2160,7 +2174,17 @@ async function doPush() {
   }
   const text = await res.text()
   // 4xx = the payload is wrong (re-pushing won't help) → structural; 5xx = transient.
-  if (!res.ok) return fail(`server rejected it (${res.status}): ${text}`, res.status >= 500)
+  // The server's teaching message rides in { error } — surface that, not raw JSON.
+  if (!res.ok) {
+    let detail = text
+    try {
+      const body = JSON.parse(text)
+      if (body?.error) detail = body.error
+    } catch {
+      // non-JSON body — keep the raw text
+    }
+    return fail(`server rejected it (${res.status}): ${detail}`, res.status >= 500)
+  }
   console.log(
     `figs: ✓ pushed ${agent.name ?? agent.id} — ${runs.length} runs, ${asks.length} asks, ${messages.length} messages`,
   )
