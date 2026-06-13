@@ -1607,3 +1607,29 @@ test("ask --to builder overrides the manager default", async () => {
   await run(["ask", "question", "--id", "q", "--title", "Self-edit flag", "--to", "builder"], { cwd: repo })
   assert.equal(lastLine(repo, "asks.jsonl").to, "builder")
 })
+
+// ---------- A7: --trigger nudge (the "why it started") ----------------------
+
+test("report on a fresh job nudges --trigger; --trigger or a fold silences it", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  // fresh born-settled job, no --trigger → tip fires
+  const r1 = await run(["report", "--id", "j1", "--result", "done"], { cwd: repo })
+  assert.match(r1.out, /--trigger/)
+  assert.match(r1.out, /why/)
+  // a job opened with --trigger → no tip
+  const r2 = await run(["report", "--id", "j2", "--result", "done", "--trigger", "monthly cron"], { cwd: repo })
+  assert.doesNotMatch(r2.out, /tip:.*--trigger/)
+  // re-reporting an existing id (a fold/continuation) → no tip
+  const r3 = await run(["report", "--id", "j1", "--result", "done again"], { cwd: repo })
+  assert.doesNotMatch(r3.out, /tip:.*--trigger/)
+})
+
+test("checkpoint opening a job nudges --trigger; --trigger silences it", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r1 = await run(["checkpoint", "--id", "c1", "--note", "starting"], { cwd: repo })
+  assert.match(r1.out, /--trigger/)
+  const r2 = await run(["checkpoint", "--id", "c2", "--note", "starting", "--trigger", "inbox sweep"], { cwd: repo })
+  assert.doesNotMatch(r2.out, /tip:.*--trigger/)
+})

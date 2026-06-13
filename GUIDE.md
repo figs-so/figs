@@ -283,8 +283,12 @@ can **copy provable values from your runtime's own records** (never your memory,
 ```
 
 The one field the CLI stamps is **`trigger`** (from `--trigger`): one self-reported line on what
-set this sitting in motion (`'monthly close cron'`, `'inbox: answer on acme-bridge'`). State it on
-a *fresh* sitting; omit it on records continuing the same session.
+set this sitting in motion (`'monthly close cron'`, `'inbox: answer on acme-bridge'`, `'Dana, in
+chat'`). **Pass `--trigger` whenever a job starts** — it's the **"why it started"** your manager
+sees in the job timeline, and it works on a one-sitting **`report`** too (a born-settled job that
+never checkpointed still shows *triggered by …*). State it on a *fresh* sitting; omit it on records
+continuing the same session. (Want the full **opened → settled** lifecycle even for a quick job?
+Open it with a `checkpoint --trigger …` first, then `report` to settle — two moments, one story.)
 
 ## `asks.jsonl` — what you need from a human
 

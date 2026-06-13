@@ -1836,6 +1836,14 @@ async function reportCmd() {
   // Announce new-vs-fold only for an explicit --id — that's where a typo means
   // "I meant to continue a job but opened a sibling" (auto-ids are always new).
   if (idGiven) announceFold("job", id, isNew, " (settled)")
+  // The "why it started": a born-settled job that never checkpointed still shows
+  // "triggered by …" in the manager's timeline when --trigger is set. Nudge it
+  // only on a fresh job (never on a fold/continuation — that would cry wolf).
+  if (isNew && !trigger) {
+    console.log(
+      `figs:   tip: \`--trigger '<what set this in motion>'\` records the "why" — your manager sees it on the job's timeline`,
+    )
+  }
   // Teaching, never a gate: a settled job with open asks citing it is the
   // normal tail-of-job pattern (the ask owns the waiting) — but if the job's
   // OUTCOME depends on an answer, in-flight is the honest state. Local fold
@@ -1899,6 +1907,11 @@ async function checkpointCmd() {
     console.log(
       `figs:   new job opened: ${id} (in flight) — checkpoint as you go; \`figs report --id ${id}\` settles it`,
     )
+    if (!trigger) {
+      console.log(
+        `figs:   tip: add \`--trigger '<what set this in motion>'\` so your manager sees why this job started`,
+      )
+    }
   } else if (settledBefore) {
     console.warn(
       `figs: ! reopening a settled job (${id}) — continue only if it's truly the same job; new work wants a new id`,
