@@ -527,32 +527,37 @@ with CLI 1.0.0:
 
 ---
 
-## 12. Rollout
+## 12. Rollout (also the macro progress tracker — check off as landed)
 
-1. **State model + surface**: optional `workspaceId`/`endpoint`, `requireFigs` →
+CLI work = this thread; **APP** tags = the parallel app-thread slice (frozen wire contract =
+§8 + §11 wire bullets). Granular progress lives in the build session's task list; the
+"are-we-done" gate is `CLAUDE.md` → Known gaps.
+
+- [ ] **1. State model + surface** (CLI): optional `workspaceId`/`endpoint`, `requireFigs` →
    agentId-only, zero-flag `init` (+ local-first stub rewrite, re-init preserves link), new
    `link` (absorbs `workspaces`; single-workspace convenience; UUID-only token-less), exit
    codes 0/1/2 + the canonical exit-2 line, peek-don't-use error, `version` offline,
    announce new-vs-fold, reference checks.
-2. **`doctor` offline + validation completeness** (incl. the new files/fields) + the
-   `--json` envelope everywhere.
-3. **The data plane** (one step — the pieces only work together): `messages.jsonl` +
+- [ ] **2. `doctor` offline + validation completeness** (CLI) (incl. the new files/fields) +
+   the `--json` envelope everywhere.
+- [ ] **3. The data plane** (one step — the pieces only work together): `messages.jsonl` +
    `figs answer` + inbox local read + messages-only soft down-sync + the close matrix
    (auto-cite, derived closes, cut-flag teaching errors) + `figs show` (pure local; absorbs
    `inbox <ask-id>`) + push carrying messages + crash tolerance + fyi retirement +
    **attachments** (unified `attachments[]`, `--attach` on all four verbs, expanded types,
-   per-line). App work in the same step: ingest accepts `messages`, the down-sync GET
+   per-line). **APP** in the same step: ingest accepts `messages`, the down-sync GET
    (agent-scoped, complete-or-flag), the ts-aware regression guard, thread rendering by mint
    origin, fyi removal, timeline rendering of per-moment attachments + download-only types.
-4. **Auth**: Bearer (+ app dual-accept), per-endpoint credentials + migration, `figs_`
-   prefix, `link` verification.
-5. **The audit script + test matrix** (release gate live from here on).
-6. **Docs flip**: README (local-first quickstart, exit codes, multiplayer pitch), GUIDE,
-   llms.txt, help regrouping; SPEC v2 lands.
-7. **Cross-repo**: `create-openfigs` outro → `figs init` first, login later · `openfigs`
-   template GUIDE wording · HQ `docs/architecture.md` updated at ship (including one quiet
-   line that a conforming server is substitutable — known consequence, chosen knowingly, not
-   a public claim) · **delete this file**.
+- [ ] **4. Auth** (CLI + **APP**): Bearer (+ app dual-accept), per-endpoint credentials +
+   migration, `figs_` prefix, `link` verification.
+- [ ] **5. The audit script + test matrix** (CLI; release gate live from here on).
+- [ ] **6. Docs flip**: README (local-first quickstart, exit codes, multiplayer pitch),
+   GUIDE, llms.txt, help regrouping; SPEC v2 lands.
+- [ ] **7. Cross-repo**: `create-openfigs` outro → `figs init` first, login later ·
+   `openfigs` template GUIDE wording · HQ `docs/architecture.md` updated at ship (including
+   one quiet line that a conforming server is substitutable — known consequence, chosen
+   knowingly, not a public claim) · **delete this file**.
+- [ ] **8. Integration**: `/figs-e2e` against the real app once CLI + APP both land.
 
 *(After this wave ships: the same audit-and-redesign pass on the app and openfigs as
 products — tracked in HQ `docs/roadmap.md` item 0. This wave deliberately touches the app
