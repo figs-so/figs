@@ -3,7 +3,15 @@
 This repo is the **open, MIT-licensed heart of Figs**: `SPEC.md` (the `.figs` protocol) and
 `figs.mjs` (the reference CLI, one zero-dependency Node file). The hosted app
 (app.figs.so) is a separate, closed repo. Tests: `node --test`. Releasing: see
-`CONTRIBUTING.md`. Local dev against the app: `FIGS_ENDPOINT=http://localhost:3000 node figs.mjs <cmd>`.
+`CONTRIBUTING.md`.
+
+**Local dev/testing against the app.** Run the app on `:3001`, then drive the CLI file directly —
+no install, no publish: `FIGS_ENDPOINT=http://localhost:3001 node figs.mjs <cmd>`. Credentials are
+**keyed by endpoint origin**, so a local token (run `figs login` once *with* `FIGS_ENDPOINT` set to
+the local endpoint) coexists with your prod token in `~/.figs/credentials.json` — pointing
+`FIGS_ENDPOINT` at localhost uses the local one, prod is never touched. **Never run bare
+`figs login`/`logout`** while testing: they default to the prod endpoint and rewrite the creds file.
+Fully offline, no app at all: `node --test` spawns the CLI against an in-process mock server.
 
 ## The local-first contract (NEVER break this)
 
