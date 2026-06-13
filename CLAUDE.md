@@ -51,12 +51,14 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 
 ## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
 
-- [ ] `figs init` requires an account (no local-mode init; `workspaceId` mandatory everywhere).
-- [ ] `figs doctor` dies "not logged in" after local checks pass.
-- [ ] Writing verbs exit 1 when not logged in (no local-mode exit-0 path without `--no-push`).
-- [ ] Error chains end at "create an account"; README/onramps lead with `login`.
-- [ ] `figs inbox` is fully remote — even in-flight jobs (local data) are fetched from the server; no local message channel (`messages.jsonl` + `figs answer`).
-- [ ] Auth: custom `x-figs-token` header (→ `Authorization: Bearer`); single endpoint-blind token in `~/.figs/credentials.json` (→ keyed by endpoint origin).
+Original audit gaps 1–5 (account-gated init/doctor/writes, error chains, fully-remote
+inbox) are **fixed** on `redesign/v1` (steps 1 + 3 core). Remaining for the 1.0.0 wave:
+
+- [ ] **Auth** (step 4): custom `x-figs-token` header (→ `Authorization: Bearer`, dual-accept); single endpoint-blind token in `~/.figs/credentials.json` (→ keyed by endpoint origin); `figs_` prefix.
+- [ ] **Attachments** (step 3 tail): writers still emit run `artifact`/`artifacts` + ask `refs`; unify to `attachments[]` on report/checkpoint/ask/close; expand to download-only types (xlsx/csv/pdf/docx); raise cap to ~10MB. (Reads already handle both shapes.)
+- [ ] **Linked down-sync** (step 3 tail): `inbox` is pure-local; add the soft, messages-only down-sync when linked (server replies → `messages.jsonl`), loud on failure/truncation.
+- [ ] **`--json` envelope** (step 2 tail): unify `{ok,data,warnings}` across status/version/doctor (inbox/show already emit JSON).
+- [ ] **Ship**: SPEC v2, docs flip, cross-repo onramps, merge `redesign/v1`, publish 1.0.0.
 
 ## Working rules
 

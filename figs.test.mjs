@@ -439,7 +439,7 @@ test("report on a linked repo with no token records locally and exits 2", async 
   assert.equal(lastLine(repo, "runs.jsonl").result, "kept")
 })
 
-test("report multi-attach copies files, links artifacts[], uploads each", async () => {
+test("report --attach copies files, links attachments[] (always an array), uploads each", async () => {
   mock.uploads = []
   const repo = await pushableRepo()
   writeFileSync(join(repo, "a.html"), "<h1>a</h1>")
@@ -450,13 +450,14 @@ test("report multi-attach copies files, links artifacts[], uploads each", async 
   )
   assert.equal(r.code, 0, r.out)
   const runRec = lastLine(repo, "runs.jsonl")
-  assert.deepEqual(runRec.artifacts, ["a.html", "b.md"])
-  assert.equal(runRec.artifact, undefined, "plural form only when >1")
+  assert.deepEqual(runRec.attachments, ["a.html", "b.md"])
+  assert.equal(runRec.artifact, undefined, "no legacy singular field")
+  assert.equal(runRec.artifacts, undefined, "no legacy plural field")
   assert.ok(existsSync(join(repo, ".figs/artifacts/a.html")))
   assert.deepEqual(mock.uploads.map((u) => u.name).sort(), ["a.html", "b.md"])
 })
 
-test("report single attach uses the singular artifact field", async () => {
+test("report --attach uses attachments[] even for a single file (no singular special case)", async () => {
   const repo = await pushableRepo()
   writeFileSync(join(repo, "one.html"), "<p>1</p>")
   const r = await run(["report", "--result", "one", "--attach", join(repo, "one.html"), "--no-push"], {
@@ -465,8 +466,19 @@ test("report single attach uses the singular artifact field", async () => {
   })
   assert.equal(r.code, 0, r.out)
   const runRec = lastLine(repo, "runs.jsonl")
-  assert.equal(runRec.artifact, "one.html")
-  assert.equal(runRec.artifacts, undefined)
+  assert.deepEqual(runRec.attachments, ["one.html"])
+  assert.equal(runRec.artifact, undefined)
+})
+
+test("report --attach accepts download-only types (xlsx) for the recon chain", async () => {
+  const repo = await pushableRepo()
+  writeFileSync(join(repo, "invoices.xlsx"), "PK fake xlsx")
+  const r = await run(["report", "--result", "data in", "--attach", join(repo, "invoices.xlsx"), "--no-push"], {
+    cwd: repo,
+    token: "t",
+  })
+  assert.equal(r.code, 0, r.out)
+  assert.deepEqual(lastLine(repo, "runs.jsonl").attachments, ["invoices.xlsx"])
 })
 
 test("attach refuses to overwrite an artifact with different content (immutable)", async () => {
@@ -527,7 +539,8 @@ test("ask raises a self-contained ask linked to its run by explicit id", async (
     "Mark the invoices chased in the ledger",
   ])
   assert.deepEqual(ask.details, [{ l: "Total overdue", v: "$4,820" }])
-  assert.deepEqual(ask.refs, [{ label: "previews.html", artifact: "previews.html" }])
+  assert.deepEqual(ask.attachments, ["previews.html"], "unified attachments[] (filename is the label)")
+  assert.equal(ask.refs, undefined, "no legacy refs field")
   assert.ok(mock.lastIngest.body.asks.find((a) => a.id === ask.id), "ask reached ingest")
   assert.doesNotMatch(r.out, /sign-off reviews best with attachments/, "no tip when attached")
   assert.doesNotMatch(r.out, /state what approval sets in motion/, "no tip when stated")
@@ -1244,4 +1257,41 @@ test("push sends messages alongside the spine", async () => {
   assert.ok(Array.isArray(mock.lastIngest.body.messages), "ingest body carries messages[]")
   assert.equal(mock.lastIngest.body.messages.at(-1).text, "yes")
   assert.match(r.out, /messages/)
+})
+
+test("close --attach pins proof of what was done to the close moment", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  await run(["answer", "q", "--text", "send it", "--by", "Wayne"], { cwd: repo })
+  writeFileSync(join(repo, "sent.html"), "<p>sent</p>")
+  const r = await run(["close", "q", "--attach", join(repo, "sent.html")], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.deepEqual(lastLine(repo, "asks.jsonl").attachments, ["sent.html"])
+})
+
+test("show aggregates attachments across an ask's moments (folding never hides one)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  writeFileSync(join(repo, "v1.html"), "<p>v1</p>")
+  writeFileSync(join(repo, "proof.html"), "<p>done</p>")
+  await run(["ask", "sign-off", "--id", "s", "--title", "ok?", "--attach", join(repo, "v1.html")], { cwd: repo })
+  await run(["answer", "s", "--approve", "--by", "Wayne"], { cwd: repo })
+  await run(["close", "s", "--attach", join(repo, "proof.html")], { cwd: repo })
+  const r = await run(["show", "s"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /v1\.html/, "the raise attachment survives")
+  assert.match(r.out, /proof\.html/, "the close attachment shows too")
+})
+
+test("attach rejects an unsupported type, accepts the expanded download-only set", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  writeFileSync(join(repo, "bad.exe"), "MZ")
+  const bad = await run(["report", "--result", "x", "--attach", join(repo, "bad.exe")], { cwd: repo })
+  assert.equal(bad.code, 1)
+  assert.match(bad.out, /unsupported type/)
+  writeFileSync(join(repo, "data.csv"), "a,b\n1,2")
+  const ok = await run(["report", "--result", "y", "--attach", join(repo, "data.csv")], { cwd: repo })
+  assert.equal(ok.code, 0, ok.out)
 })

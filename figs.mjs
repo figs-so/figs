@@ -147,7 +147,8 @@ const COMMANDS = {
       "validation, artifact copy, push).",
       "Single-quote prose values ('…') — inside double quotes your shell expands $,",
       "so \"($4,474.63)\" reaches figs as \"(,474.63)\": silent corruption.",
-      "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
+      "--attach <file> (repeatable) pins a file to this moment (attachments[]) —",
+      "rendered types (html/md/txt/json/images) show inline; data/docs (csv/pdf/xlsx/docx) download.",
       "--no-push writes locally only; `figs push` publishes later.",
       "Closing an ask is `figs close` — a close is not a job; never report one.",
       "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
@@ -252,9 +253,9 @@ const COMMANDS = {
     eg: "figs show acme-bridge",
   },
   close: {
-    args: "<ask-id> [--note <text>] [--run <run-id>] [--withdrawn]",
+    args: "<ask-id> [--note <text>] [--run <run-id>] [--attach <file>] [--withdrawn]",
     flags: [
-      "--note", "--run", "--withdrawn", "--no-push",
+      "--note", "--run", "--attach", "--withdrawn", "--no-push",
       // accepted-but-removed: handled with a teaching error pointing to the new path
       "--chosen", "--by", "--answer-id", "--rejected",
     ],
@@ -388,10 +389,13 @@ const RUN_STATUSES = ["ok", "warn", "fail"]
 const RUN_STATES = ["in-flight", "settled"]
 const ASK_STATUSES = ["open", "resolved", "withdrawn", "rejected"]
 const TO_VALUES = ["manager", "builder"]
-const ARTIFACT_EXTS = new Set([
-  ".html", ".md", ".txt", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-])
-const ARTIFACT_MAX = 3 * 1024 * 1024
+// Two render classes. RENDERABLE shows inline in the sandboxed viewer;
+// DOWNLOAD_ONLY (data/docs — back-office work products) is offered as a
+// download, never rendered (lower risk than HTML rendering — nothing executes).
+const RENDERABLE_EXTS = [".html", ".md", ".txt", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]
+const DOWNLOAD_ONLY_EXTS = [".csv", ".pdf", ".xlsx", ".xls", ".docx"]
+const ARTIFACT_EXTS = new Set([...RENDERABLE_EXTS, ...DOWNLOAD_ONLY_EXTS])
+const ARTIFACT_MAX = 10 * 1024 * 1024
 
 /** "signoff" → `did you mean "sign-off"?` — normalized nearest match. */
 function didYouMean(value, allowed) {
@@ -413,13 +417,22 @@ function validateRun(r) {
   if (!r.ts) issues.push(`${label}: missing required "ts" (ISO-8601 — \`figs report\` stamps it for you)`)
   checkEnum(issues, r, "status", RUN_STATUSES, label)
   checkEnum(issues, r, "state", RUN_STATES, label)
-  if (r.artifact !== undefined && typeof r.artifact !== "string") {
-    issues.push(`${label}.artifact: must be a single file name (use "artifacts" for a list)`)
-  }
-  if (r.artifacts !== undefined && (!Array.isArray(r.artifacts) || r.artifacts.some((a) => typeof a !== "string"))) {
-    issues.push(`${label}.artifacts: must be an array of file names`)
-  }
+  checkAttachments(issues, r, label)
   return issues
+}
+/** attachments[] is the unified field (bare file names). The legacy run
+ *  `artifact`/`artifacts` and ask `refs` are still READ (attachmentsOf), so we
+ *  only type-check them here for back-compat; new writes use attachments[]. */
+function checkAttachments(issues, obj, label) {
+  if (obj.attachments !== undefined && (!Array.isArray(obj.attachments) || obj.attachments.some((a) => typeof a !== "string"))) {
+    issues.push(`${label}.attachments: must be an array of file names`)
+  }
+  if (obj.artifact !== undefined && typeof obj.artifact !== "string") {
+    issues.push(`${label}.artifact: legacy field — use attachments[] (an array of file names)`)
+  }
+  if (obj.artifacts !== undefined && (!Array.isArray(obj.artifacts) || obj.artifacts.some((a) => typeof a !== "string"))) {
+    issues.push(`${label}.artifacts: legacy field — use attachments[] (an array of file names)`)
+  }
 }
 /** Validate one folded ask record → array of issue strings. */
 function validateAsk(a) {
@@ -462,8 +475,9 @@ function validateAsk(a) {
     issues.push(`${label}.details: must be [{ "l": "Label", "v": "Value" }]`)
   }
   if (a.refs !== undefined && (!Array.isArray(a.refs) || a.refs.some((r) => !r || typeof r.label !== "string"))) {
-    issues.push(`${label}.refs: must be [{ "label": "…", "artifact": "<file in artifacts/>" }]`)
+    issues.push(`${label}.refs: legacy field — use attachments[] (an array of file names)`)
   }
+  checkAttachments(issues, a, label)
   return issues
 }
 // ---------- messages.jsonl — the human ledger -------------------------------
@@ -1245,7 +1259,7 @@ function attachFiles(paths) {
     }
     const bytes = readFileSync(p)
     if (bytes.length > ARTIFACT_MAX) {
-      die(`--attach: ${basename(p)} is ${(bytes.length / 1048576).toFixed(1)} MB — over the 3 MB cap; compress or split it`)
+      die(`--attach: ${basename(p)} is ${(bytes.length / 1048576).toFixed(1)} MB — over the ${ARTIFACT_MAX / 1048576} MB cap; compress or split it`)
     }
     const name = basename(p)
     const dest = join(repoDir, "artifacts", name)
@@ -1437,7 +1451,11 @@ function showCmd() {
         console.log(`\n  Details:`)
         for (const d of ask.details) console.log(`      ${d.l}: ${d.v}`)
       }
-      showAttachments(ask)
+      // Union across all of the ask's raw lines (raise/revise/close) — folding
+      // would drop an intermediate; attachments belong to their moment.
+      showAttachmentNames(
+        readJsonl("asks.jsonl").filter((a) => a.id === id).flatMap(attachmentsOf),
+      )
     } else {
       console.log(`figs: ask ${id} — not in this copy's journal (full context in the app); showing the replies that are here`)
     }
@@ -1467,19 +1485,19 @@ function showCmd() {
         `    · ${l.ts ? agoStr(l.ts) : "—"} [${l.state ?? "settled"}] ${l.result ?? ""}${atts.length ? `  · ${atts.join(", ")}` : ""}`,
       )
     }
-    showAttachments(run)
+    showAttachmentNames(trail.flatMap(attachmentsOf))
     return
   }
 
   die(`"${id}" isn't a run or an ask in this journal — \`figs inbox\` lists what's here`)
 }
 
-/** Print a record's attachments, noting any not present on this machine. */
-function showAttachments(rec) {
-  const names = attachmentsOf(rec)
-  if (!names.length) return
+/** Print attachment names (deduped), noting any not present on this machine. */
+function showAttachmentNames(names) {
+  const unique = [...new Set(names)]
+  if (!unique.length) return
   console.log(`\n  Attachments:`)
-  for (const name of names) {
+  for (const name of unique) {
     const here = existsSync(join(repoDir, "artifacts", name))
     console.log(`      · ${name}${here ? "" : "  (not in this copy — view it in the app)"}`)
   }
@@ -1609,6 +1627,7 @@ async function closeCmd() {
   const note = flag("--note")
   const runRef = flag("--run")
   warnUnknownRun(runRef)
+  const attached = attachFiles(flagAll("--attach")) // proof of what was done
 
   // The newest reply for this ask drives the close (messages accumulate; sort by ts).
   const replies = readJsonl("messages.jsonl")
@@ -1643,6 +1662,7 @@ async function closeCmd() {
 
   warnEatenDollar(resolution.chosen, resolution.note)
   const line = { id: askId, status, resolution }
+  if (attached.length) line.attachments = attached // pinned to the close moment
   appendJsonl("asks.jsonl", line)
   const cite =
     resolution.answer && newest
@@ -1706,8 +1726,7 @@ async function reportCmd() {
   const trigger = flag("--trigger")
   if (trigger) run.session = { trigger }
   const attached = attachFiles(flagAll("--attach"))
-  if (attached.length === 1) run.artifact = attached[0]
-  else if (attached.length > 1) run.artifacts = attached
+  if (attached.length) run.attachments = attached
   warnEatenDollar(run.result)
   warnUnknownUnit(unit)
   const issues = validateRun(run)
@@ -1764,8 +1783,7 @@ async function checkpointCmd() {
   const trigger = flag("--trigger")
   if (trigger) run.session = { trigger }
   const attached = attachFiles(flagAll("--attach"))
-  if (attached.length === 1) run.artifact = attached[0]
-  else if (attached.length > 1) run.artifacts = attached
+  if (attached.length) run.attachments = attached
   warnEatenDollar(run.result)
   warnUnknownUnit(unit)
   const issues = validateRun(run)
@@ -1863,10 +1881,14 @@ async function askCmd() {
   warnUnknownRun(runRef)
   warnUnknownUnit(ask.unit)
   const attached = attachFiles(flagAll("--attach"))
-  if (attached.length) {
-    ask.refs = [...(base.refs ?? []), ...attached.map((n) => ({ label: n, artifact: n }))]
-  }
-  if (ask.type === "sign-off" && !ask.refs?.length) {
+  // Unified attachments[] (bare file names). Accept attachments[] from --stdin,
+  // and normalize a legacy refs[] into it (the filename is the label now).
+  const baseAtts = Array.isArray(base.attachments)
+    ? base.attachments
+    : (base.refs ?? []).map((r) => r?.artifact).filter(Boolean)
+  delete ask.refs
+  if (attached.length || baseAtts.length) ask.attachments = [...baseAtts, ...attached]
+  if (ask.type === "sign-off" && !ask.attachments?.length) {
     console.warn(
       "figs: ! tip: a sign-off reviews best with attachments — the exact content to approve, plus a brief (what to do once approved + what it requires). Add --attach <file>",
     )
@@ -2052,27 +2074,26 @@ async function doPush() {
   console.log(`       view at ${base}/w/${config.workspaceId}`)
 
   // The spine landed; an artifact-stage failure is transient/oversize — retry.
-  return (await pushArtifacts(base, token, config, runs, asks))
+  return (await pushArtifacts(base, token, config))
     ? { ok: true }
     : { ok: false, retryable: true }
 }
 
 /**
- * Upload the files referenced by runs (run.artifact) and ask refs (refs[].artifact).
- * The spine ingest is JSON-only; artifacts go to a separate endpoint that stores
- * them content-addressed (an unchanged file is skipped server-side). Content is
- * sent base64-encoded so any type — html, markdown, text, json, images — survives.
- * A **server rejection** (auth/size/etc.) is fatal: it prints ✗ and exits non-zero
- * so the agent never believes a report published when it didn't (esp. the ~3 MB
- * cap → 413). A **missing local file** is only a warning — that's the agent
- * referencing an artifact it didn't actually produce, not a publish failure.
+ * Upload the files attached anywhere in the journal. Collected from the RAW
+ * lines (not the folded records) so a file attached at a checkpoint isn't lost
+ * when a later report folds over it — attachments belong to their moment. The
+ * spine ingest is JSON-only; files go to a separate content-addressed endpoint
+ * (an unchanged file is skipped server-side), base64-encoded so any type
+ * survives. A **server rejection** (auth/size) is fatal; a **missing local
+ * file** is only a warning (the agent referenced something it didn't produce).
  */
-async function pushArtifacts(base, token, config, runs, asks) {
-  const refNames = (asks ?? []).flatMap((a) =>
-    (a.refs ?? []).map((r) => r.artifact),
-  )
-  const runNames = runs.flatMap((r) => [r.artifact, ...(r.artifacts ?? [])])
-  const names = [...new Set([...runNames, ...refNames].filter(Boolean))]
+async function pushArtifacts(base, token, config) {
+  const names = [
+    ...new Set(
+      [...readJsonl("runs.jsonl"), ...readJsonl("asks.jsonl")].flatMap(attachmentsOf),
+    ),
+  ]
   if (names.length === 0) return true
 
   let uploaded = 0
