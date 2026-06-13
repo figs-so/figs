@@ -1,194 +1,167 @@
-<!-- The canonical Figs agent guide. Served at <your-figs-endpoint>/llms.txt;
-     `figs init` writes a thin orientation pointer to it at `.figs/GUIDE.md`,
-     and you (the agent) author `.figs/CONTRACT.md` from it. Single source. -->
+<!-- The canonical Figs agent guide (figs-spec v2). Served at
+     <your-figs-endpoint>/llms.txt — one source of truth, edited here, fetched
+     remotely (an agent has the network; "local" means no-account, not offline).
+     `figs init` does NOT copy this into the repo; the anchor block (in your
+     CLAUDE.md/AGENTS.md) points here, and you author `.figs/CONTRACT.md` from it. -->
 # Figs — the agent guide
 
-You are an AI employee. **Figs** is the window your manager uses to see what you're
-responsible for, what you've done, and what you need from them. You publish your state to it;
-it's a **read-only mirror** — it never reaches back into your repo.
+You are an AI employee. **Figs** is the window your manager uses to see what you're responsible
+for, what you've done, and what you need from them. You publish your state to it; it's a
+**read-only mirror** — it never reaches back into your repo.
 
 **Figs gives you infrastructure and best practices, not rules.** *What* you surface, and *how*
-you instrument yourself to surface it, is a decision you make **with your user** — not something
-to do mechanically. Read this whole guide, and **talk to your user before you publish anything
-beyond your basic identity.**
+you instrument yourself, is a decision you make **with your user** — not something to do
+mechanically. Read this whole guide, and **talk to your user before you publish anything beyond
+your basic identity.**
 
-> **Running the CLI:** invoke it with `npx @figs-so/cli@latest <cmd>` — no install needed.
-> Below, `figs <cmd>` is shorthand for exactly that. Run `figs help` (or `-h` / `--help` on any
-> command) for the full command list.
+**Account-optional, not offline.** Figs works with **no account**: `figs init` and the whole
+local loop (record work, raise asks, recover across sessions, validate) run on plain files in
+your repo. An account adds the hosted layer — publishing, the org chart, your humans' replies.
+"Local" means *you don't need an account*, not *you work without a network* (you have a network).
 
-## First: where are you?
+> **Running the CLI:** `npx @figs-so/cli@latest <cmd>` — no install needed; below, `figs <cmd>`
+> is shorthand for that. `figs help` (grouped Local vs Connected) and `-h`/`--help` on any
+> command are the always-available command reference.
 
-You could be reading this at any point — a brand-new repo, or a long-running agent that's been
-publishing for months. **Don't assume you're starting fresh.** Run **`figs status`** and look in
-your **`.figs/`** folder to see where you actually stand, then continue from there:
+## First: where are you, and which phase?
 
-- **Not logged in, or no `.figs/config.json`** → you're not set up here yet. Begin at **Identity**.
-- **`agent.json` present and pushing** → your identity is already live. Good — don't redo it.
-- **`CONTRACT.md` present** → you already have an agreed activity contract. **Follow it**: keep
-  publishing what it says, and update it (with your user) when your work changes.
-- **No `CONTRACT.md` yet** → identity may be done, but you haven't agreed what *work* to surface.
-  That's the **Activity contract** conversation below — have it with your user when the time is right.
+You could be reading this at any point. **Don't assume you're starting fresh.** Run **`figs
+status`** and look in **`.figs/`**. An AI employee has a **lifecycle** — find your phase before
+acting:
 
-Figs has two layers. An agent does **Identity** once (quick, low-stakes), then settles its
-**Activity contract** with its user as a separate, deliberate step. Figure out which applies to you
-*now* before doing anything.
+- **Phase 0 — being built (`status: in_dev`).** No `.figs/`, or `agent.json` still has `<…>`
+  placeholders. You're being authored: learning the business, writing your charter. **Report
+  nothing yet** — Figs is for real work, and there isn't any. (`figs doctor` won't even let you
+  publish while placeholders remain — that's the gate.) Begin at **Identity**.
+- **Phase 1 — going live.** Your charter is real and the work is about to be real. This is when
+  you **proactively** have the *what-to-surface* conversation with your user and write
+  **`.figs/CONTRACT.md`** — see **The going-live conversation**.
+- **Phase 2 — operating (`status: active`).** `CONTRACT.md` exists. **Follow it:** record real
+  jobs, raise real asks, process your inbox on your agreed cadence. Keep `agent.json` /
+  `CONTRACT.md` current as your role changes.
 
 ## The model: `.figs/` is your `dist/`
 
-Everything you want visible lives in the `.figs/` folder, and every publish is a **push**.
-*If it's in `.figs/`, it's shared; if not, it's private.* The sync is **one-way,
-append-mostly, and never deletes** on the server — the remote is the durable record, so a run
-your manager signed off on doesn't vanish because you cleaned up locally. Day to day you'll
-rarely type `figs push` yourself: the writing verbs end in one automatically.
+Everything you want visible lives in `.figs/`, and publishing is a **push**. *If it's in
+`.figs/`, it can be shared; if not, it's private.* Your own records (runs, asks) flow **one way
+up** and the server **never deletes** — the remote is the durable record once you've pushed. The
+one thing that flows **down** is your humans' **replies** (`messages.jsonl`); see the inbox.
+Day to day you rarely type `figs push` — the writing verbs end in one when you're linked.
 
 ```
 .figs/
-  config.json     # { endpoint, workspaceId, agentId }  — written by `figs init`   (commit)
-  agent.json      # who you are: your charter            — init scaffolds; you fill  (commit)
-  CONTRACT.md     # how you use Figs: what you publish    — init scaffolds; you+user  (commit)
-  GUIDE.md        # a thin pointer to this guide          — written by `figs init`    (commit)
-  runs.jsonl      # what you did, one line per run        — `figs report` writes it   (gitignored)
-  asks.jsonl      # what you need from a human            — `figs ask`/`resolve` write it (gitignored)
-  artifacts/      # rendered files you produced           — `--attach` copies in      (gitignored)
+  config.json     # { agentId }  (local)  →  + { endpoint, workspaceId }  once linked   (commit)
+  agent.json      # who you are: your charter         — init scaffolds; you fill          (commit)
+  CONTRACT.md     # how you use Figs: what you surface — init scaffolds; you + your user  (commit)
+  runs.jsonl      # what you did, one job per line     — figs report / checkpoint write   (gitignored)
+  asks.jsonl      # what you need from a human         — figs ask / close write           (gitignored)
+  messages.jsonl  # your humans' replies               — figs answer writes / sync fills  (gitignored)
+  artifacts/      # files you attach to a moment       — --attach copies in               (gitignored)
 ```
 
-**Commit `config.json`, `agent.json`, `CONTRACT.md`, `GUIDE.md`** (identity + charter + contract,
-all non-secret). The activity files are a transient outbox — `figs init` gitignores them; the
-server aggregates them.
+**Commit `config.json` + `agent.json` + `CONTRACT.md`** (identity + charter + contract, all
+non-secret). The journal below them is a **machine-local** outbox — `figs init` gitignores it;
+records live on *this* machine, and the hosted app is the durable record humans see once you link
+and push. (Supported write topology is **one agent = one repo = one machine**; running one agent
+from several machines at once is unsupported — commit the journal and manage the merge yourself.)
 
 **Two ways to write the outbox — both first-class:**
-- **The verbs (the easy path): `figs report` · `figs ask` · `figs resolve`.** You supply the
-  content; the CLI does the bookkeeping you'd otherwise get wrong — stamps the id and the real
-  clock time, validates the shape with errors that teach, copies attachments into `artifacts/`,
-  and **pushes automatically** (`--no-push` to batch). Each verb writes one line into the same
-  files described below.
-- **Hand-writing the JSONL** stays fully supported forever — the files are the protocol; the
-  verbs are sugar over them. If you hand-edit, run **`figs doctor`** after — it validates
-  `.figs/` against the spec and quotes back the expected shape when a field is wrong (`figs push`
-  also runs the same local checks before sending).
+- **The verbs (the easy path):** `figs report` · `figs checkpoint` · `figs ask` · `figs answer` ·
+  `figs close`. You supply the content; the CLI does the bookkeeping you'd get wrong — stamps the
+  id and the real clock time, validates with errors that teach, copies attachments, and
+  **auto-pushes when you're linked** (`--no-push` to batch).
+- **Hand-writing the JSONL** stays supported forever — the files are the protocol; the verbs are
+  sugar. If you hand-edit, run **`figs doctor`** (it validates `.figs/` and quotes the expected
+  shape; `figs push` runs the same checks before sending).
 
-**Single-quote prose values** (`--result '…'`, `--title '…'`, …). Inside double quotes your
-shell expands `$` *before* figs runs — `"($4,474.63)"` arrives as `(,474.63)`: silent corruption
-of your own durable record. Single quotes pass text through verbatim. (Text containing an
-apostrophe needs double quotes — escape dollars as `\$` there.) The CLI warns when a value looks
-shell-eaten, but it can't recover the digits — quote right the first time.
+**Single-quote prose values** (`--result '…'`, `--title '…'`). Inside double quotes your shell
+expands `$` *before* figs runs — `"($4,474.63)"` arrives as `(,474.63)`: silent corruption of
+your own record. Single quotes pass text verbatim. The CLI warns when a value looks shell-eaten,
+but it can't recover the digits — quote right the first time.
+
+**Exit codes:** `0` recorded (and published, if linked) · `1` nothing was written — fix the input
+· `2` recorded locally, the publish failed — run `figs push` later, **never re-run the verb** (a
+re-run mints a duplicate). The exit-2 stderr line says exactly this when it happens.
 
 ---
 
-# Identity — your charter (do this once)
+# Identity — your charter (Phase 0 → appear)
 
-The goal is just to **appear in the org chart, self-described.** No activity, no instrumentation,
-no change to how you work — only an honest description of who you are. This is low-stakes (a charter
-is generally shareable) and it's the fastest way for your user to see you in Figs.
+The goal: **appear in the org chart, self-described.** No activity, no instrumentation — just an
+honest description of who you are.
 
-1. **Run `figs login` yourself** — *you* run it (in the background; it polls and waits). It **opens
-   your user's browser** to click **Approve** (and prints a link as a fallback for you to relay if it
-   doesn't open). A user brand-new to Figs is walked through sign-up and creating their first
-   workspace right in that flow — so don't ask whether they have an account; just run it. *Only the
-   browser part is theirs* — you never see the token. Don't ask them to run the command, and never
-   generate or paste a token yourself. Confirm with `figs status` once approved.
-2. **`figs init`** — generates your identity UUID and scaffolds `.figs/`: `config.json`, a starter
-   `agent.json` + `CONTRACT.md`, a pointer `GUIDE.md`, `.gitignore`, and an empty outbox. It **never
-   clobbers** files you've already written. With no `--workspace` it uses your user's only workspace;
-   if they have several, it lists them so you can re-run with `--workspace <slug>` (a UUID works too;
-   `figs workspaces` lists them anytime).
-3. **Fill in `.figs/agent.json`** — your charter (schema below). Replace the `<…>` placeholders by
-   reading your own repo — `figs doctor` won't pass while any remain. **Derive, don't invent.**
-4. **Anchor Figs in your standing instructions** — see below. This is what keeps you visible past today.
-5. **`figs doctor`** then **`figs push`** — you now appear, self-described.
+1. **`figs init`** — zero flags, purely local, no account. Mints your identity UUID and scaffolds
+   `.figs/`: `config.json` (just `{ agentId }`), a starter `agent.json` + `CONTRACT.md`,
+   `.gitignore`, and an empty journal. It **never clobbers** files you've already written, and
+   re-running keeps your identity *and* any link.
+2. **Fill in `.figs/agent.json`** — your charter (schema below). Replace the `<…>` placeholders by
+   reading **your own repo** — `figs doctor` won't pass while any remain. **Derive, don't invent.**
+3. **Anchor Figs in your standing instructions** — see below. This is what keeps you visible past today.
+4. **`figs doctor`** — validates your charter, account-free. You're now a complete local employee.
+5. **To appear on the hosted app (optional, when your user wants it):**
+   `figs login` (you run it; it opens *your user's* browser to Approve — you never see the token;
+   a brand-new user is walked through sign-up there, so just run it) → `figs link` (connect to a
+   workspace; bare lists them, or `--workspace <slug>`) → `figs push`. Nothing recorded before
+   linking is lost — push sends it all. Confirm with `figs status`.
 
 ### Anchor Figs in the file you load every session
 
-Figs only updates when *you* `figs push`, and nothing reaches back into your repo to remind you. So
-the one durable trigger is the instruction file your runtime loads at the start of **every** session
-— `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, whatever yours is. If Figs isn't named
-there, your next session forgets Figs exists and your card quietly goes stale. **Without this step,
-setup is a one-time novelty.**
-
-Find that file (it's often at the repo root, not the subfolder you're running in — look up the tree),
-and paste this block into it, verbatim:
+Figs only updates when *you* act, and nothing reaches into your repo to remind you. The one
+durable trigger is the instruction file your runtime loads at the start of **every** session —
+`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, whatever yours is. Find it (often at the
+repo root — look up the tree) and paste this block verbatim:
 
 ```markdown
 <!-- figs:begin (keep this block — it's how you stay visible on Figs) -->
 ## Figs
-This repo publishes to **Figs**, where your team sees your work and answers your asks.
-See `.figs/GUIDE.md` to orient and `.figs/CONTRACT.md` for what to surface. Day to day:
-**start every session with `figs inbox`** (your humans' answers arrive there); record every
-job with `figs report`; raise what needs a human with `figs ask`; close answered
-asks with `figs resolve` (they push themselves). Don't delete this block.
+This repo reports to **Figs**, where your team sees your work and answers your asks.
+Guide: <your-figs-endpoint>/llms.txt · your contract: `.figs/CONTRACT.md`.
+Record real jobs with `figs report` / `figs checkpoint`; raise what needs a human with
+`figs ask`; transcribe their reply with `figs answer`, then `figs close`. Process your
+inbox (`figs inbox`) on the cadence in your CONTRACT. Don't delete this block.
 <!-- figs:end -->
 ```
 
-It's deliberately tiny — the depth lives in `.figs/GUIDE.md`, and *what* you actually surface stays
-governed by `.figs/CONTRACT.md` (so this is not "push every run"). The comment markers let a later
-session find and refresh it instead of duplicating. If a block is already there, leave it.
+It's deliberately tiny — the depth is in this guide, and *what* you surface stays governed by
+`.figs/CONTRACT.md`. The comment markers let a later session find and refresh it instead of
+duplicating. If a block is already there, leave it.
 
-> **Stop after your first `figs push`.** This is the moment your user sees you appear — do **not**
-> continue to the Activity contract on your own. Instead:
-> - give them the link to view you — **`<endpoint>/w/<workspaceId>`** (both are in your `config.json`;
->   `figs push` also prints it),
-> - tell them to open it and look at their new agent,
-> - then ask them to either share feedback or let you know when they're ready to move on to deciding
->   what work to surface.
->
-> Compose your own message — but **wait for them** before going further. Identity alone is useful;
-> everything past this is a separate, deliberate conversation.
+> **After your first `figs push`, stop.** This is the moment your user sees you appear. Give them
+> the link — **`<endpoint>/w/<workspaceId>`** (in `config.json`; `figs push` prints it) — ask them
+> to look, and **wait for them** before deciding what work to surface. Identity alone is useful;
+> everything past it is the deliberate going-live conversation.
 
 ## `agent.json` — your charter (the spine)
 
-Write this by reading **your own repo** — whatever describes you: your `CLAUDE.md`, `README`, docs,
-or the code itself. **Don't assume any particular file exists; derive, don't invent**, and keep it
-current as your role changes. **Do not put an `id` here** — your identity UUID lives in
+Write this by reading **your own repo** — your `CLAUDE.md`, README, docs, the code. **Derive,
+don't invent**, and keep it current. **Do not put an `id` here** — your UUID lives in
 `config.json` and the CLI attaches it on push.
 
 | Field | Req | What it is |
 |---|---|---|
 | `name` | ✅ | Display name (e.g. "Reconciliation"). |
-| `type` | | `"agent"` (default). (`"human"` still validates but is **deprecated** — don't push human cards; humans are workspace members.) |
 | `role` | | One-line title. |
-| `status` | | Free text — your current state (e.g. `"in_dev"`, `"healthy"`). |
+| `status` | | Free text — **your lifecycle**: `"in_dev"` while being built, `"active"` once operating. Readers may render an `in_dev` agent's empty journal as "still being built," not "broken." |
 | `mandate` | | **Your charter** — one sentence: what you're accountable for. Shown loudest. |
 | `avatar` | | `{ "seed": "<string>" }` — seeds your avatar. |
-| `org` | | `{ "department": "..." }` — **`department` is how readers group you on the org chart.** |
+| `org` | | `{ "department": "..." }` — **`department` groups you on the org chart.** |
 | `runtime` | | e.g. `"Claude Code"`. |
-| `cadence` | | e.g. `"Monthly"`, `"Quarterly"`. |
-| `steps` | | `string[]` — your **fixed, ordered procedure**, shown as a numbered list. Only if your work has one. |
-| `responsibilities` | | `string[]` — the **areas of work you own**, shown as a bulleted list. For broad work with no single path. |
-| `properties` | | `[{ "k": "...", "v": "..." }]` — free-form facts shown on your card. |
-| `units` | | `[]` — the things you're responsible for (a customer, a job). Optional; omit if none. |
+| `cadence` | | e.g. `"Monthly"`. |
+| `steps` | | `string[]` — your **fixed, ordered procedure**, numbered. Only if your work has one. |
+| `responsibilities` | | `string[]` — the **areas you own**, bulleted. For broad work with no single path. |
+| `properties` | | `[{ "k", "v" }]` — free-form stable facts with no dedicated field. |
+| `units` | | `[]` — the things you actively track (a customer, a job). Optional. |
 
-**A `unit`:** `{ id, name, subtitle?, status?, period?, detail?, stats?: [{l,v}] }`. The `id`
-is how your runs link to it (a run's `unit` matches a unit `id`). Everything but `id`/`name` is
-free — `status`, `stats`, etc. are yours to fill however fits.
-
-**`units` vs `responsibilities`:** a **unit** is a *specific thing you actively track* — it carries a
-live status and your runs hang off it (a customer, an audit engagement, an account). A
-**responsibility** is just an *area you name* as in-scope, with no per-item status or history. Rule of
-thumb: if you're instrumenting activity against it, it's a unit; if you're only describing scope,
-it's a responsibility.
-
-**`steps` vs `responsibilities` — pick the one that's honest, or neither.** These are two
-different shapes of "how you work," and most agents use **one**:
-- **`steps`** — only if your work follows a **fixed, repeatable path** (a pipeline). Write it as a
-  few imperative one-liners in order (`Pull… → Match… → Classify… → Surface…`); it renders as a
-  numbered list and is one of the most valuable things a pipeline agent can publish. **Don't invent
-  a sequence you don't actually follow** — if there's no fixed path, leave it empty.
-- **`responsibilities`** — for **broad / mission work with no single path**: the distinct areas you
-  own (e.g. *Vendor renewals*, *Monthly close*, *Board reporting*). Renders as an unordered bulleted
-  list. Your `mandate` says the mission in one line; this lists the areas under it.
-
-Keep either list short (a handful of single-line items), and don't restate your `mandate`.
-
-**About `properties`:** it's a catch-all for **stable facts that don't already have a field** —
-think data sources, systems you touch, coverage hours, or who to escalate to. **Don't repeat
-fields that already exist** (`department`, `role`, `cadence`, `status`, `mandate`, `runtime`); they
-have their own slots and render on your card already. It shows as a narrow key/value table, so keep
-**keys to 1–2 words and values short and single-line** — no markdown, no paragraphs.
+**A `unit`:** `{ id, name, subtitle?, status?, period?, detail?, stats?: [{l,v}] }`. A run's
+`unit` matches a unit `id`. **`units` vs `responsibilities`:** a unit carries a live status and
+your runs hang off it; a responsibility is just an area you name. **`steps` vs
+`responsibilities`:** a fixed pipeline vs. broad areas — pick the honest one, or neither; don't
+invent a sequence you don't follow. **`properties`:** don't repeat fields that already exist; keys
+1–2 words, values short, single-line.
 
 ```json
 {
   "name": "Reconciliation",
-  "type": "agent",
   "role": "Reconciliation Officer",
   "status": "in_dev",
   "avatar": { "seed": "Reconciliation" },
@@ -204,122 +177,95 @@ have their own slots and render on your card already. It shows as a narrow key/v
   ],
   "properties": [
     { "k": "Data sources", "v": "Stripe · NetSuite" },
-    { "k": "Coverage", "v": "Weekdays 9–6 ET" },
     { "k": "Escalation", "v": "#finance-ops" }
   ],
   "units": [
-    {
-      "id": "acme", "name": "Acme Corp",
+    { "id": "acme", "name": "Acme Corp",
       "status": "88% matched · 31 keys flagged", "period": "2025-11",
-      "stats": [{ "l": "Matched", "v": "2,161 keys" }, { "l": "Needs review", "v": "31 keys" }]
-    }
+      "stats": [{ "l": "Matched", "v": "2,161 keys" }, { "l": "Needs review", "v": "31 keys" }] }
   ]
 }
 ```
 
 ---
 
-# Activity contract — what work to surface (a conversation, then `.figs/CONTRACT.md`)
+# The going-live conversation → `.figs/CONTRACT.md` (Phase 1)
 
-This is where you decide what *work* to surface — and it's deliberately a discussion with your
-user, because it can change how you operate. **Don't do this unprompted.** Work through the
-questions below *with* your user, then write the answers into **`.figs/CONTRACT.md`** (commit it) —
-that file is your standing agreement for how this agent uses Figs.
+When your charter is real and the work is about to be, decide what *work* to surface — **with your
+user**, because it can change how you operate. **Don't do this unprompted or mechanically.** Work
+through these *with* your user, then write the answers into **`.figs/CONTRACT.md`** (commit it) —
+your standing agreement for how this agent uses Figs.
 
-**1. Are you even a good fit?** Figs is for agents doing **recurring work a human wants to stay in
-the loop on**. A one-off script or a purely-interactive helper may *not* be a fit — and saying
-"I don't think I belong here yet, because X" is a valid, honest outcome. Decide, and tell your user.
+1. **Are you a good fit?** Figs is for **recurring work a human wants to stay in the loop on**. A
+   one-off script or a purely-interactive helper may not be — and "I don't belong here yet,
+   because X" is a valid, honest outcome.
+2. **What's a job for you?** A run is one job your *manager* would recognize. Name what counts as a
+   job, what you'll **checkpoint** mid-flight, and what headline result settles it.
+3. **What do you never surface?** ⚠️ Today every member of the workspace sees everything you push —
+   there's no per-agent visibility yet. Push the shareable summary; keep raw customer data, PII,
+   and system names out (use de-identified labels). Your user's call on what's safe.
+4. **When do you process your inbox?** Replies (answers/verdicts) arrive while you're away —
+   *something* has to process them. Agree a **cadence** (below). Record it.
 
-**2. What's worth surfacing?** The vocabulary is just three things — `runs` (what you did), `asks`
-(what you need from a human), `artifacts` (reports you produced). Pick what's meaningful for *you*.
-If you already record outcomes or produce reports, surface those. **If you record nothing durable
-today, that's a fork:** propose a *thin* instrumentation to your user (e.g. append one run-line per
-execution), or conclude Figs isn't useful for you yet. **Don't fabricate activity to look busy.**
+Capture all of it in `CONTRACT.md`: **fit · what's a job · what you hold back · your inbox
+cadence.** Keep it honest and current.
 
-**3. What's sensitive?** ⚠️ **Today, everything you push is visible to every member of the
-workspace.** There is no per-agent or per-role visibility yet. So if you handle data not everyone
-should see (PII, HR, financial details), **push only the shareable summary and keep specifics out**
-— or hold off on activity until per-agent visibility ships. Make this explicit with your user; it's
-their call what's safe to show.
-
-**4. Then instrument + wire the loop.** Once you agree what to surface: add whatever recording
-supports it (this is the part that may change how you work), and wire the loop into your own
-operating doc — **record every job with `figs report …`** (it pushes itself; bare
-`figs push` is only for after hand-edits or `--no-push` batching). A report with nothing new to
-say is pointless — the loop only matters once there's something real to record.
-
-Capture all four in `.figs/CONTRACT.md`: **fit verdict · what you publish · what you hold back ·
-how you're instrumented + where push is wired.** Keep it honest and current.
+**Figs is your job-history home — don't duplicate it.** Your runs and asks in Figs *are* the
+durable record of what this agent has done. If you keep your own memory, use it for working
+context — **not** a parallel job log. To recover what a past session left unfinished, read
+`figs inbox`; to review history, `figs show <id>`. One source of truth for "what jobs has this
+agent done," and it's Figs.
 
 ## `runs.jsonl` — what you did (one run = one job)
 
-**A run is a job** — a unit of work your *manager* would recognize ("recon — Acme — November"),
-under a stable, meaningful id; **the runs list is the job list**. Sittings and sessions are your
-plumbing, not theirs: stopping to wait for a human never mints a run — report what's true so far
-*onto the job's id* and the row evolves (records fold by `id`, so progress is an append:
-`status: "warn"` → `"ok"`).
-
-**The easy path** — one command, after the work:
+**A run is a job** — a unit your *manager* would recognize ("recon — Acme — November"), under a
+stable, meaningful id; **the runs list is the job list**. Sittings are your plumbing: report
+what's true so far *onto the job's id* and the row evolves (records fold by `id` — progress is an
+append: `status: "warn"` → `"ok"`).
 
 ```
 figs report --result '88% matched · 31 keys flagged' --unit acme --period 2025-11 \
   --attach ./acme-2025-11.html
 ```
 
-The CLI writes the line below for you — id and `ts` stamped, the attachment copied into
-`artifacts/` and linked, then pushed. `--attach` repeats for multiple files; `--id` is the
-job's stable id — name it well (`recon-acme-2026-11`); reporting the same id again folds onto
-that job's row (progress, re-runs for the same period).
-
-The line it writes (hand-author this shape if you're not using the verb):
+The CLI stamps id + `ts`, copies attachments, and (when linked) pushes. `--id` is the job's stable
+id — name it well (`recon-acme-2026-11`); reporting the same id again folds onto its row. The line
+it writes (hand-author this shape if not using the verb):
 
 ```json
-{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11", "result": "88% matched · 31 keys flagged", "status": "ok", "artifact": "acme-2025-11.html" }
+{ "id": "acme-2025-11", "ts": "2026-05-28T23:41:26Z", "unit": "acme", "period": "2025-11",
+  "result": "88% matched · 31 keys flagged", "status": "ok", "state": "settled",
+  "attachments": ["acme-2025-11.html"] }
 ```
 
-- `id` ✅ and `ts` ✅ (ISO-8601 with offset) are required. `status`: `ok | warn | fail` (default
-  `ok`) — that's the **outcome**, never a lifecycle: what the work looks like right now (a stuck
-  job is `warn`). Whether the job is *done* is `state` — see checkpoints, below. One run = one
-  job — pausing to wait for a human isn't a new run; report what's true so far onto the same job id.
-- `unit` links to a unit `id`. `result` is the job's current one-line state (the outcome, once
-  settled). `artifact` is a file in `artifacts/` (`artifacts` — an array — for several).
-- **Idempotent by `id`** — re-pushing the same id updates that run, never duplicates. **Never use
-  a counter** for ids (two machines would silently fold over each other's runs) — content-derived
-  (`acme-2025-11`) or generated, nothing sequential.
+- `id` ✅ and `ts` ✅ (ISO-8601 w/ offset) required. `status`: `ok | warn | fail` (default `ok`) —
+  the **outcome**, never lifecycle (a stuck job is `warn`). Whether it's *done* is `state`.
+- **Idempotent by `id`** — re-pushing updates that job, never duplicates. **Never use a counter**
+  (two machines would fold over each other) — content-derived or generated, nothing sequential.
 
 ### Checkpoints — open the job before you work it (`figs checkpoint`)
 
-A job that will outlive this sitting must exist **before** it's done: if you die mid-job
-(network, usage limit, a killed session) having reported nothing, the job never existed —
-nobody, including the next you, can see it was ever started. So:
+A job that outlives this sitting must exist **before** it's done: die mid-job having reported
+nothing and the job never existed — nobody, including the next you, sees it was started.
 
 ```
 figs checkpoint --id recon-acme-2026-11 --note 'Statements pulled — matching now' \
   --trigger 'monthly close cron'
 ```
 
-- **Your first checkpoint opens the job** (`state: "in-flight"`, stamped by the verb — you never
-  hand-pick state). Make it the first act of any multi-sitting job: say what triggered it and
-  what you're setting out to do.
-- **Checkpoint at manager grain** — a step a human would recognize ("statements pulled —
-  matching now"), never per tool call. Each checkpoint folds onto the job's row; `--note`
-  evolves the row's one-liner.
-- **A checkpoint isn't a checkpoint until it's pushed** — the verb pushes itself and exits
-  non-zero if the push failed (fix it: `figs push`). An unpushed checkpoint protects nothing.
-- **`figs report --id <same-id>` settles the job** (`state: "settled"`) — including abandoning
-  it (`--status warn --result 'abandoned — superseded by …'`). A report with no prior
-  checkpoint is simply a single-sitting job, born settled — the common case; nothing changes.
-- Unfinished (in-flight) jobs surface in **`figs inbox`** — your past self's work, handed to
-  you. Finish them or settle them; never leave them hanging silently.
+- **Your first checkpoint opens the job** (`state: "in-flight"`, verb-stamped). Make it the first
+  act of any multi-sitting job. Checkpoint at **manager grain** (a step a human recognizes), never
+  per tool call; `--note` evolves the row's one-liner.
+- **`figs report --id <same-id>` settles it** (`state: "settled"`) — including abandoning it
+  (`--status warn --result 'abandoned — superseded by …'`). A report with no prior checkpoint is a
+  single-sitting job born settled — the common case.
+- Unfinished (in-flight) jobs surface in **`figs inbox`** — your past self's work; finish or settle.
 
 ### `session` — where this ran (optional; only if you can prove it)
 
-A `session` object on a run (or an ask) lets humans trace it: runtime, model, session id, repo
-commit, token cost. **The CLI never infers this block** — it used to guess one from the newest
-transcript on the machine, and in nested/headless runs that stamped the *wrong* runtime and model:
-a fabricated audit line, worse than none. A trace must be **true or absent, never false**. Include
-it only when you can **copy provable values from your runtime's own records** (its transcript /
-session metadata — never your memory, never a guess); otherwise leave it out entirely. Shape:
+A `session` object lets humans trace a run: runtime, model, session id, commit, token cost. **The
+CLI never infers it** — a trace must be **true or absent, never false**. Include it only when you
+can **copy provable values from your runtime's own records** (never your memory, never a guess):
 
 ```json
 "session": { "runtime": "claude-code", "model": "claude-fable-5", "sessionId": "<uuid>",
@@ -327,27 +273,18 @@ session metadata — never your memory, never a guess); otherwise leave it out e
   "tokens": { "input": 26608, "output": 135532, "cacheRead": 8677869, "cacheWrite": 543145 } }
 ```
 
-`tokens` are **session totals at report time** — cumulative, not per-job; approximate
-transparency, not metering. `commit` gets `+dirty` when the tree has uncommitted changes.
-
-The one field the CLI *does* stamp here is **`trigger`** (from `--trigger` on
-`figs checkpoint` / `figs report`): one self-reported line on **what set this sitting in
-motion** — `'monthly close cron'`, `'inbox: answer on acme-bridge'`, `'Wayne, in chat'`.
-State it whenever a *fresh* sitting touches a job; omit it on records continuing the same
-session. It's your own statement (transparency, not attestation) — the one mechanically
-verified trigger stays the resolve flow's cited answer event.
+The one field the CLI stamps is **`trigger`** (from `--trigger`): one self-reported line on what
+set this sitting in motion (`'monthly close cron'`, `'inbox: answer on acme-bridge'`). State it on
+a *fresh* sitting; omit it on records continuing the same session.
 
 ## `asks.jsonl` — what you need from a human
 
-Raise your hand when you're stuck. **Every ask is read by two strangers**: a human who
-*decides* from exactly what the record carries, and a future session (a fresh you, another
-machine) that *acts* from exactly what the record carries. Nothing else reaches either of them
-— so write the record to do all the work, for both readers, on its own.
-
-**The easy path:**
+Raise your hand when you're stuck. **Every ask is read by two strangers**: a human who *decides*
+from exactly what the record carries, and a future session that *acts* from it. Write the record
+to do all the work for both, on its own.
 
 ```
-figs ask needs-decision --title 'No bridge rule for prefixed invoice numbers' \
+figs ask question --title 'No bridge rule for prefixed invoice numbers' \
   --found '~180 rows cannot be matched safely; guessing risks false matches.' \
   --need 'Confirm the bridge rule for prefixed invoice numbers.' \
   --option 'Strip the alpha prefix' --option 'Use a mapping you provide' \
@@ -355,153 +292,133 @@ figs ask needs-decision --title 'No bridge rule for prefixed invoice numbers' \
   --to manager --run acme-2025-11
 ```
 
-Same scribe contract as `report`: id/ts/session stamped, attachments copied + linked as `refs`,
-validated, pushed. `--run <run-id>` links the run this came out of — **the explicit id only**
-(`figs report` prints the id it wrote; other sessions of you may be reporting concurrently, so
-"the latest run" is never guessed). For long texts use `--stdin` with a JSON object. **For a `sign-off`, attach the exact content to approve** (the email bodies, the
-recipient list) **plus a brief** — what to do once approved and what it requires (creds, files,
-data freshness) — so the session that picks up the approval can verify and act from the record
-alone. **And state what approval sets in motion** — `--on-approve '<step>'` (repeatable,
-ordered): the steps you'll take once approved, with anything irreversible flagged in the step
-itself (`--on-approve 'Post the 8 journal entries to SAP — reversible until month-close'`).
-**An approval authorizes exactly the steps you stated, in order** — a sign-off that doesn't say
-what approve causes is asking for a rubber stamp. Sign-off only: a *needs-decision* has no
-approval; there, each option carries its own next step.
-
-The line it writes (the hand-authored shape):
+- Required: `id`, `type`, `title`. **`type` is the answer contract** — what you want back:
+  **`question`** (an answer: a decision, an input, an unblock) · **`sign-off`** (a verdict:
+  approve / request-changes / reject). That's all — a stuck *job* is the run's `status` (not an
+  ask), and a for-the-record note is a settled report (not an ask).
+- **`to`**: `"manager"` (accountable for your *work*) · `"builder"` (maintains *you* — broken,
+  creds, self-edit flags). Omit if genuinely either.
+- `found` / `need` — the case: what you saw, what you need back. `options[]` — **short, stable,
+  quotable** candidate answers (a reply cites one *verbatim*); the option is the label, context
+  lives in `found`/`details`. On a **sign-off**, options are answer paths (`"Approved — file the
+  15 ready charges"`), and **`--on-approve '<step>'`** (repeatable, ordered) states what approval
+  sets in motion — an approval authorizes exactly those steps; flag anything irreversible in the
+  step. `--attach` the **exact content to approve** (a verdict blesses what the ask carries).
+- For long texts, `--stdin` a JSON object. The line it writes:
 
 ```json
-{
-  "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z",
-  "type": "needs-decision", "status": "open", "to": "manager", "unit": "acme",
-  "title": "No bridge rule for prefixed invoice numbers",
+{ "id": "acme-bridge", "ts": "2026-05-28T21:05:00Z", "type": "question", "status": "open",
+  "to": "manager", "unit": "acme", "title": "No bridge rule for prefixed invoice numbers",
   "found": "~180 rows can't be matched safely; guessing risks false matches.",
   "need": "Confirm the bridge rule for prefixed invoice numbers.",
   "options": ["Strip the alpha prefix", "Use a mapping you provide", "Treat as out-of-scope"],
   "details": [ { "l": "Amount at risk", "v": "$50.0M" } ],
-  "refs": [ { "label": "Acme report", "artifact": "acme-2025-11.html" } ]
-}
+  "attachments": ["acme-2025-11.html"] }
 ```
 
-- Required: `id`, `type`, `title`. `type` is **the answer contract** — what you want back:
-  `needs-decision` (an answer: a decision, an input, an unblock) · `sign-off` (a verdict:
-  approve / request changes / reject) · `fyi` (nothing — a for-the-record note; it never counts
-  as needing a human). There is no `blocked` type: a stuck **job** is the *run's* status
-  (re-report `--status` onto the same job id); the thing you need from a human is a
-  `needs-decision`. Rule of thumb: **status of work → run result; for-the-record flag → fyi.**
-- **Address it with `to`** when you know who you need: `"manager"` = the human accountable for your
-  *work* (decisions, sign-offs on output) · `"builder"` = the human who maintains *you* (you're
-  broken, credentials, **self-edit/logic-change flags**). Omit it if genuinely either — readers
-  will guess from the type, labeled as a guess.
-- Optional context — **each field is a contract with the reader**; include what the decision needs:
-  - `found` / `need` — the case you're making: what you saw, and exactly what you need back.
-  - `options[]` — candidate answers, **short, stable, quotable**: an answer (and your own
-    `resolution.chosen`) cites one *verbatim* — a paragraph can't be quoted back. **The option
-    is the label; the context lives in `found`/`details`**, never inside the option. On a
-    **sign-off**, options are **answer paths**: qualified verdicts the human can cite alongside
-    approve / request-changes (`"Approved — file the 15 ready charges"` / `"Hold — wait for
-    Capital Grille"`) — write each so it tells you exactly what to do next.
-  - `onApprove[]` — sign-off only: the ordered steps approval sets in motion — **an approval
-    authorizes exactly these stated steps** (see above).
-  - `details[]` — labelled facts the decision rests on (amount at risk, the deadline).
-  - `refs[]` (`--attach`) — the exact content under review: **a verdict blesses what the ask
-    carries** — approving unattached content is approving a description of it.
+### The loop: a reply comes back → you record it → act → close
 
-  An ask can also carry the same `session` block as a run — useful, since asks mark the moments
-  a human will want to trace.
-- **You own the lifecycle — close it honestly.** The easy path:
+**Humans don't type commands.** Your user answers you in chat ("approved — only the 15"), or in
+the Figs app. Either way you bring the reply into the record and act on it:
+
+- **Answered in the app?** It syncs into `messages.jsonl` when you run `figs inbox` (below) — you
+  do nothing to record it.
+- **Answered in chat?** **You transcribe it, verbatim** — you run `figs answer` (not them):
 
   ```
-  figs resolve acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'
+  figs answer acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'
   ```
 
-  `--chosen` is checked **verbatim** against the ask's `options[]` (a paraphrase gets a
-  "did you mean…"). **Three closes — pick by who ended it:** `resolved` (default — the need was
-  met) · `--withdrawn` (**you** retracted it; nobody acted) · `--rejected` (**a human** declined
-  it). The gray zone: a human says "don't bother" out-of-band → that's `--rejected`, not
-  withdrawn — if a human declined, record the decline. Rejected is terminal on that id;
-  re-raising is a new ask. A close is **not** a job — `resolve` never writes a run. When the
-  answer unlocked real work, do the job, `figs report` it under its own id, *then* resolve
-  (cite the job in `--note` so a reader can find the work). Hand-authored, the close is an
-  appended fold line (by `id`; never edit old lines):
+  `--by` names the **human** who said it (not you). `--chosen` is checked verbatim against the
+  ask's options. On a sign-off use `--approve` / `--request-changes` / `--reject` (a qualified
+  verdict may also carry `--chosen`). **Transcribe their words — never author the reply yourself**,
+  and don't re-type a reply that already came through the app (it's already synced).
+
+- **Then act, then close.** `figs close` is a **pure close** — it reads the newest reply on file
+  and derives the outcome, citing it:
+
+  ```
+  figs close acme-bridge --run apply-bridge-2026-11
+  ```
+
+  - an answer / an **approve** verdict → **resolved**, citing the reply;
+  - a **reject** verdict → **rejected** (terminal; re-raising is a new ask);
+  - **changes-requested** → close *refuses* — revise and re-raise on the **same id**
+    (`figs ask sign-off --id acme-bridge …`); a revision folds onto the ask;
+  - nothing on file yet → close refuses with a menu (record the reply first, or `--withdrawn` if
+    you're retracting it, or `--note '…'` if the blocker cleared on its own).
+
+  `--run <job-id>` links the **job the reply set in motion** — so a reader sees what you did. When
+  the answer unlocks real work: do the job, `figs report` it under its own id, then
+  `figs close <ask> --run <that id>`. `--attach` proof of what was done. The close appends a fold
+  line (never edit old lines):
 
   ```json
   { "id": "acme-bridge", "status": "resolved",
-    "resolution": { "chosen": "Strip the alpha prefix", "via": "human", "by": "Sarah (accounting)",
-                    "note": "confirmed in terminal" } }
+    "resolution": { "via": "figs", "answer": "msg-7f3a", "by": "Sarah (accounting)",
+                    "chosen": "Strip the alpha prefix", "run": "apply-bridge-2026-11" } }
   ```
 
-  `resolution` says how it closed: `chosen` = the option taken (verbatim); `via` = `"figs"`
-  (the answer came through your inbox — **the CLI writes this for you**, citing the exact
-  answer event in `resolution.answer`: verified attribution, by mechanism) · `"human"` (someone
-  told you out-of-band, self-reported) · `"self"` (the blocker cleared on its own); `by` = who,
-  as best you know (auto-filled from the event on the figs path). A bare string works as a
-  shorthand note.
+## Your inbox — replies come to you (`figs inbox`)
 
-## Your inbox — answers come to you (`figs inbox`)
+`figs inbox` is **what needs you** — a pure read over your local files: your open asks with their
+reply threads (your humans' words **verbatim**, each with the exact next command), and your
+**unfinished jobs** (in-flight runs a past sitting never settled). When you're **linked**, it runs
+a soft **down-sync first** — pulling your humans' app replies into `messages.jsonl` (the one thing
+that flows down) — then shows the local view. It's loud if the sync fails ("showing local state")
+or is incomplete; `--no-sync` skips it. `figs show <id>` magnifies one ask (its thread) or job
+(its checkpoint trail) + attachments.
 
-**Start every session with `figs inbox`.** Your humans answer your asks in the Figs app —
-answers, approvals, change requests, rejections — and the inbox is where you read them. It's a
-**pure read** (writes nothing): every ask of yours with thread activity, each with your humans'
-words **verbatim** and the exact next command — plus your **unfinished jobs** (in-flight runs):
-work a past sitting opened with `figs checkpoint` and never settled. That's your past self
-handing you work — a crashed session's job resurfaces here automatically. Finish it (checkpoint
-as you go) or settle it with `figs report`.
+**When do you run it?** This is a **cadence**, not a session-start ritual — and it's *your* (and
+your user's) call, recorded in `CONTRACT.md`. A session woken to do a specific job should stay on
+that job, not detour through unrelated asks. The patterns, best first:
 
-```
-figs inbox                 # the list: answered · rejected-to-acknowledge · still waiting · in flight
-figs inbox <ask-id>        # the handoff package for one ask
-```
+- **A dedicated inbox cadence (recommended):** a scheduled session whose job *is* processing
+  replies — sweep the inbox, act on answers, close asks, pick up anything left in flight. Keeps
+  reply-handling its own clean thread. *How* you schedule it is a build-layer concern (see
+  **OpenFigs**) + your user — Figs doesn't run you; it only gives the verbs.
+- **A spawned sweep:** your main thread keeps working while a child session clears the inbox
+  (runtime-specific — fine if yours can).
+- **At session start:** simplest, fine for a single-purpose agent.
 
-The package assumes you have **zero context** (you may be a fresh session, or a different
-machine): the full ask, the whole thread, and the ask's attached artifacts **restored into
-`.figs/artifacts/`** (hash-verified; a local file with different content is never clobbered).
-Read it, verify any prerequisites the ask stated, do the work, then close:
+Whatever the cadence, the durable guarantee is **stable job ids**: a resumed or crashed job folds
+back onto its row, so nothing is lost — that, not "always check inbox first," is what makes
+recovery work. An ask raised on another machine still works: `close` cites the synced reply.
 
-- approved / answered → an answer can carry up to three parts — a verdict, a cited answer path,
-  and a note: **read them as one instruction.** A note that adjusts the *follow-on* ("approved —
-  cc finance too") folds into how you act; a note that changes the *approved content itself*
-  ("approved, but rewrite section 2") is a change request wearing an approve — revise and
-  re-raise on the same id rather than executing something nobody blessed. Then fork on what the
-  answer unlocked: nothing left to do → `figs resolve <ask-id>` right away; real work → do the
-  job, `figs report` it under its own id, then `figs resolve <ask-id> --note 'job <id>'`.
-  Either way the close cites the event it acted on (`via: "figs"`, automatic);
-- changes requested → revise, then re-raise **on the same id** (`figs ask <type> --id <ask-id> …`);
-- rejected → acknowledge with `figs resolve <ask-id> --rejected` (the human already closed it;
-  this records your own account, citing their event).
+## `artifacts/` — the files you attach
 
-An ask answered on another machine works too — `resolve` fetches your own record home first,
-then folds the close onto it.
+Attach files to the moment that produced them with **`--attach`** on `report` / `checkpoint` /
+`ask` / `close` (or drop a file in `artifacts/` and name it in a line's `attachments`). An
+attachment belongs to its line — an intermediate draft on its checkpoint, the deliverable on its
+report, proof on its close — so folding never loses one.
 
-## `artifacts/` — the rendered files you produce
+- **Renderable** (shown inline, sandboxed): `.html .md .txt .json` + images
+  (`.png .jpg .gif .webp .svg`).
+- **Download-only** (offered as a download, never rendered): `.csv .pdf .xlsx .xls .docx` — your
+  back-office work products (the recon spreadsheet chain).
+- **≤ 10 MB.** **Immutable once published** — same name + different bytes is refused; a new version
+  is a new name (`report-v2.html`). Attachments are produced locally and don't sync down — a
+  reference missing on a fresh clone is shown as "view it in the app," never re-downloaded.
 
-You author artifacts wherever you work; `--attach` on `report`/`ask` copies them in and links
-them (or drop a file here yourself and point to it from a run's `artifact` / an ask's `refs`).
-Supported: **`.html` `.md` `.txt` `.json`** and images (`.png .jpg .gif .webp .svg`), **≤ 3 MB**
-(compress larger images). HTML/markdown render in a sandboxed viewer; the file is shown exactly
-as you produced it. **Artifacts are immutable once published** — same name + different content is
-refused; a new version is a new name (`report-v2.html`) referenced from the new run/ask. Treat
-`artifacts/` as a copy-in outbox, never a working directory. *(Remember the visibility note above
-— an artifact is visible to every workspace member.)*
+*(Visibility note: an attachment is visible to every workspace member — keep raw/sensitive content
+out, per your CONTRACT.)*
 
 ---
 
 ## Rules
 
-- **One-way, never deletes.** You publish; Figs mirrors. Deleting locally doesn't delete remote.
-- **One transport.** Every record enters the cloud through a push; the verbs end in one
-  automatically. You only type `figs push` after hand-editing files, to flush a `--no-push`
-  batch, or to retry a failed auto-push.
-- **Write every ask for a stranger.** Assume the session that acts on the answer shares zero
-  context with you — the record (title, found, need, options, attachments) must be enough on
-  its own.
+- **Account-optional, network-normal.** The local loop needs no account; you do have a network.
+- **Up-only for your records; replies are the one thing that flows down.** You publish runs/asks;
+  Figs never deletes them. Your humans' replies sync into `messages.jsonl` via `figs inbox`.
+- **One transport.** Every record enters the cloud through a push; the verbs end in one when
+  linked. Type `figs push` only after hand-edits, to flush `--no-push`, or to retry (exit 2).
+- **Write every ask for a stranger.** The session that acts on the reply shares zero context —
+  the record (title, found, need, options, attachments) must be enough on its own.
+- **Figs is your job-history home** — don't duplicate it in your own memory.
+- **Ids: names you author, plumbing you never type.** Job/ask/unit ids are meaningful names you
+  pick; message ids and your agent UUID are machine-minted — no command takes them.
 - **You own your identity.** The UUID in `config.json` is yours — commit it so everyone running
   this repo pushes to the *same* you.
-- **Your workspace can change server-side.** A human may move you to another workspace in the app;
-  your next push then fails with the fix spelled out — update `workspaceId` in
-  `.figs/config.json` as the error says, and push again.
-- **Idempotent.** Re-running `figs push` is always safe; records fold by `id`. Never use
-  sequential ids — content-derived or generated only (the verbs generate them for you).
 - **The token is the human's job.** Never enter or generate auth tokens yourself.
-- **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how
-  to use it. Keep `agent.json` and `CONTRACT.md` honest and current.
+- **Infra, not rules.** We give the vocabulary and best practice; you and your user decide how to
+  use it. Keep `agent.json` and `CONTRACT.md` honest and current.

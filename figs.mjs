@@ -997,43 +997,6 @@ function isUuid(s) {
 }
 
 /**
- * The local `.figs/GUIDE.md` is a thin orientation breadcrumb (safe to
- * regenerate) — the full, always-current guide + schema is served at
- * `${endpoint}/llms.txt`, and the agent's own standing agreement lives in the
- * precious, agent-authored `.figs/CONTRACT.md` (which `init` never touches).
- */
-function guideStub(endpoint) {
-  return `<!-- Written by \`figs init\` (safe to regenerate). Orientation only — the full
-     guide lives at the URL below; your own contract lives in CONTRACT.md. -->
-# Figs — this folder
-
-This folder is your **work journal**, and it works **right now, with no account**. Record what
-you do (\`figs report\`/\`checkpoint\`), raise what needs a human (\`figs ask\`), recover across
-sessions (\`figs inbox\`) — all on local files. Linking to the hosted app is optional and later.
-
-- **Full guide + schema → ${endpoint}/llms.txt** — read this first.
-- **Your contract → ./CONTRACT.md** — what you publish / hold back (you + your user author it).
-- **Identity → config.json** (committed) · **charter → agent.json** (you write).
-- **Stay visible:** keep the \`figs:begin\`…\`figs:end\` block in the instruction file you load every
-  session (CLAUDE.md/AGENTS.md/…). It's what brought you back here — don't remove it.
-
-**Where are you?** You may be reading this at any time — don't assume you're starting fresh. Run
-\`figs status\` and check \`.figs/\` before acting:
-  • not set up yet → author \`.figs/agent.json\`, then \`figs doctor\` to validate it.
-  • CONTRACT.md present → follow it; keep recording what it says.
-  • want it on the hosted app → \`figs link\` (needs a one-time login), then \`figs push\`.
-
-**Local vs linked:** your journal lives on **this machine** — that's the durable record locally.
-\`figs link\` + \`figs push\` mirror it to the app so your humans (and other machines) can see it;
-nothing recorded before linking is lost — push sends it all. The token is the human's job —
-never generate one yourself.
-
-Commit config.json + agent.json + CONTRACT.md + this file. runs.jsonl / asks.jsonl /
-messages.jsonl / artifacts/ are a gitignored, machine-local outbox.
-`
-}
-
-/**
  * A starter `agent.json` — written by `figs init` only when none exists. The
  * `<…>` values are placeholders the agent fills in by reading its own repo;
  * `figs doctor` refuses to bless a charter that still has them. `name` defaults
@@ -1060,28 +1023,36 @@ function agentJsonStub(name) {
   )
 }
 
-/** A starter activity contract — written by `figs init` only when none exists. */
+/**
+ * A starter CONTRACT — the going-live record, written by `figs init` only when
+ * none exists. It's the agent↔user agreement, authored in the going-live
+ * conversation (not mechanically). The `<…>` prompts are answered with the user.
+ */
 function contractStub(name) {
-  return `# Activity contract — ${name} on Figs
+  return `# Contract — ${name} on Figs
 
-What this agent surfaces to Figs vs. holds back. **Agree it with your user** — this is the
-deliberate Activity step, not something to do mechanically. See \`.figs/GUIDE.md\` for the why.
+The agreement between this employee and its humans: what counts as real work, what gets surfaced,
+what's held back. **Author this WITH your user** in the going-live conversation (see the guide) —
+not mechanically. Keep it honest and current.
 
-> **Maintain:** edit when the surfacing agreement changes (a new stream, a sensitivity change).
-> Keep it honest to what you actually push.
+> **Maintain:** edit when the work or the surfacing agreement changes.
 
-## What I surface
+## Fit
+<are you a good fit? Figs is for recurring work a human wants to stay in the loop on. "Not yet,
+because X" is a valid, honest answer.>
 
-| Stream | Surface? | Content |
-|--------|----------|---------|
-| **runs** | <yes/no> | one line per run — what I did, de-identified scope, the headline result + status. |
-| **artifacts** | <yes/no> | the report(s) a run produced. |
-| **asks** | when real | genuine blockers / decisions / sign-offs / FYIs for my manager. 0 is a fine number. |
+## What's a job (what I report)
+- **A job is:** <the unit your manager would recognize — e.g. "one monthly reconciliation">
+- **I checkpoint:** <the mid-flight steps a human would recognize, for jobs that outlive a sitting>
+- **A job settles when:** <the headline result that means done>
 
 ## What I never surface
-
 Raw user content — ever. Plus, for this agent: <anything sensitive to its domain>. Use
 **de-identified labels** (\`<scope>-01\`), never customer or system names.
+
+## Inbox cadence
+<when do I process human replies? dedicated schedule (recommended) · spawned sweep · at session
+start. How it's scheduled is a build concern (OpenFigs) + your user's call — record it here.>
 `
 }
 
@@ -1201,7 +1172,7 @@ async function init() {
   ensure(
     ".gitignore",
     [
-      "# Figs — commit config.json + agent.json + CONTRACT.md + GUIDE.md.",
+      "# Figs — commit config.json + agent.json + CONTRACT.md.",
       "# The journal below is a machine-local outbox: records live on this machine;",
       "# the hosted app is the durable record once you `figs link` + `figs push`.",
       "runs.jsonl",
@@ -1212,7 +1183,6 @@ async function init() {
       "",
     ].join("\n"),
   )
-  ensure("GUIDE.md", guideStub(endpoint))
   const name = basename(process.cwd())
   const charterCreated = ensure("agent.json", agentJsonStub(name))
   ensure("CONTRACT.md", contractStub(name))
@@ -1239,18 +1209,18 @@ async function init() {
     `        publish to the hosted app (optional)${existing?.workspaceId ? " — already linked" : ": `figs link`"}, then \`figs push\``,
   )
   console.log(
-    "        Anchor Figs in the file you load each session (CLAUDE.md/AGENTS.md/…): the figs:begin block.",
+    `        Anchor Figs in the file you load each session (CLAUDE.md/AGENTS.md/…): paste the figs:begin block from ${endpoint}/llms.txt.`,
   )
   console.log(
-    "        Commit config.json + agent.json + CONTRACT.md + GUIDE.md; never commit credentials.json.",
+    "        Commit config.json + agent.json + CONTRACT.md; never commit credentials.json.",
   )
 }
 
 // ====================== the writing verbs ===================================
-// report / ask / resolve — sugar over the same files (hand-writing stays
-// first-class). The agent supplies content; the CLI stamps id + real-clock ts,
-// validates with teaching errors, copies attachments, then invokes the same
-// push as `figs push`.
+// report / checkpoint / ask / answer / close — sugar over the same files
+// (hand-writing stays first-class). The agent supplies content; the CLI stamps
+// id + real-clock ts, validates with teaching errors, copies attachments, then
+// (when linked) invokes the same push as `figs push`.
 //
 // NOTE — no session auto-capture (removed in 0.5.0). The CLI used to infer a
 // `session` trace (runtime/model/tokens) from "the newest transcript on this

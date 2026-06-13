@@ -189,9 +189,10 @@ test("init scaffolds .figs/ with no account and no network", async () => {
   assert.match(cfg.agentId, /^[0-9a-f-]{36}$/)
   assert.equal(cfg.workspaceId, undefined, "local config carries no workspaceId")
   assert.equal(cfg.endpoint, undefined, "local config carries no endpoint")
-  for (const f of ["agent.json", "CONTRACT.md", "GUIDE.md", ".gitignore", "runs.jsonl", "asks.jsonl", "messages.jsonl"]) {
+  for (const f of ["agent.json", "CONTRACT.md", ".gitignore", "runs.jsonl", "asks.jsonl", "messages.jsonl"]) {
     assert.ok(existsSync(join(repo, ".figs", f)), `missing .figs/${f}`)
   }
+  assert.ok(!existsSync(join(repo, ".figs/GUIDE.md")), "init no longer scaffolds a GUIDE.md stub")
 })
 
 test("init rejects flags — it is purely local", async () => {
