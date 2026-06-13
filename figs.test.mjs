@@ -31,6 +31,10 @@ const mock = {
   uploads: [],
   /** GET /api/inbox response — tests set asks; reset to empty per test. */
   inbox: { ok: true, truncated: false, asks: [] },
+  /** GET /api/messages (the down-sync) — tests set these. */
+  messages: [],
+  messagesTruncated: false,
+  messagesStatus: 200,
   /** name → { content, hash } served by GET /api/artifacts/raw. */
   rawArtifacts: new Map(),
 }
@@ -65,6 +69,10 @@ before(async () => {
       }
       if (req.url.startsWith("/api/inbox")) {
         return send(200, mock.inbox)
+      }
+      if (req.url.startsWith("/api/messages")) {
+        if (mock.messagesStatus !== 200) return send(mock.messagesStatus, { error: "boom" })
+        return send(200, { ok: true, truncated: mock.messagesTruncated, messages: mock.messages })
       }
       if (req.url.startsWith("/api/artifacts/raw")) {
         const name = new URL(req.url, "http://x").searchParams.get("name")
@@ -1400,4 +1408,97 @@ test("help groups commands by layer (local vs connected)", async () => {
   const connected = r.out.slice(r.out.indexOf("Connected"))
   for (const v of ["init", "answer", "show", "close", "inbox"]) assert.match(local, new RegExp(`\\b${v}\\b`))
   for (const v of ["link", "push", "login"]) assert.match(connected, new RegExp(`\\b${v}\\b`))
+})
+
+// ============================================================================
+// Redesign — step 3 tail: the linked down-sync (figs inbox pulls replies)
+// ============================================================================
+
+const MSG_TS = "2026-06-13T10:00:00Z"
+const resetMessages = () => {
+  mock.messages = []
+  mock.messagesTruncated = false
+  mock.messagesStatus = 200
+}
+
+test("inbox down-syncs the human's replies into messages.jsonl when linked", async () => {
+  resetMessages()
+  const repo = await pushableRepo() // linked to the mock
+  await run(["ask", "question", "--id", "q", "--title", "Pick", "--option", "A", "--no-push"], { cwd: repo, token: "t" })
+  mock.messages = [
+    { id: "msg-app-1", kind: "answer", ask: "q", by: "Sarah", ts: MSG_TS, source: "app", chosen: "A" },
+  ]
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  // merged into the local ledger…
+  assert.equal(lastLine(repo, "messages.jsonl").id, "msg-app-1")
+  // …and surfaced as an answered ask (app-minted → no "(transcribed)" marker)
+  assert.match(r.out, /q · question — Pick/)
+  assert.match(r.out, /answered by Sarah/)
+  assert.doesNotMatch(r.out, /transcribed/)
+  assert.match(r.out, /figs close q/)
+})
+
+test("down-sync dedups by id — a second inbox adds nothing", async () => {
+  resetMessages()
+  const repo = await pushableRepo()
+  await run(["ask", "question", "--id", "q", "--title", "?", "--no-push"], { cwd: repo, token: "t" })
+  mock.messages = [{ id: "msg-1", kind: "answer", ask: "q", by: "W", ts: MSG_TS, source: "app", text: "yes" }]
+  await run(["inbox"], { cwd: repo, token: "t" })
+  await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(readLines(repo, "messages.jsonl").filter((m) => m.id === "msg-1").length, 1)
+})
+
+test("down-sync flags truncation loudly (never a silent partial)", async () => {
+  resetMessages()
+  mock.messagesTruncated = true
+  mock.messages = [{ id: "msg-1", kind: "answer", ask: "q", by: "W", ts: MSG_TS, source: "app", text: "y" }]
+  const repo = await pushableRepo()
+  await run(["ask", "question", "--id", "q", "--title", "?", "--no-push"], { cwd: repo, token: "t" })
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /sync incomplete/)
+})
+
+test("a failed sync degrades to the local view (exit 0, loud)", async () => {
+  resetMessages()
+  const repo = await pushableRepo() // linked
+  await run(["ask", "question", "--id", "q", "--title", "still here", "--no-push"], { cwd: repo, token: "t" })
+  // point the endpoint at a dead address so the sync can't reach it
+  const r = await run(["inbox"], { cwd: repo, token: "t", env: { FIGS_ENDPOINT: "http://127.0.0.1:1" } })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /couldn't sync/)
+  assert.match(r.out, /still here/, "the local view is still shown")
+})
+
+test("--no-sync skips the network entirely", async () => {
+  resetMessages()
+  mock.messages = [{ id: "msg-skip", kind: "answer", ask: "q", by: "W", ts: MSG_TS, source: "app", text: "y" }]
+  const repo = await pushableRepo()
+  await run(["ask", "question", "--id", "q", "--title", "?", "--no-push"], { cwd: repo, token: "t" })
+  const r = await run(["inbox", "--no-sync"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(readLines(repo, "messages.jsonl").length, 0, "no message pulled")
+  assert.doesNotMatch(r.out, /sync/i)
+})
+
+test("an orphan reply (ask not in this copy) is surfaced, never dropped", async () => {
+  resetMessages()
+  mock.messages = [{ id: "msg-orphan", kind: "answer", ask: "ghost", by: "W", ts: MSG_TS, source: "app", text: "hi" }]
+  const repo = await pushableRepo()
+  const r = await run(["inbox"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(lastLine(repo, "messages.jsonl").id, "msg-orphan", "still recorded locally")
+  assert.match(r.out, /raised elsewhere|not in this copy/)
+  assert.match(r.out, /figs show ghost/)
+})
+
+test("local-mode inbox never touches the network (no sync attempted)", async () => {
+  resetMessages()
+  mock.messages = [{ id: "msg-nope", kind: "answer", ask: "q", by: "W", ts: MSG_TS, source: "app", text: "y" }]
+  const repo = newRepo()
+  await run(["init"], { cwd: repo }) // local, not linked
+  const r = await run(["inbox"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(readLines(repo, "messages.jsonl").length, 0, "local mode pulls nothing")
 })

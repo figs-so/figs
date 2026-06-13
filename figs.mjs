@@ -227,17 +227,17 @@ const COMMANDS = {
     eg: "figs answer acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'",
   },
   inbox: {
-    args: "[<ask-id>] [--json]",
-    flags: ["--json"],
+    args: "[<ask-id>] [--json] [--no-sync]",
+    flags: ["--json", "--no-sync"],
     desc: "what needs you — your humans' replies on your asks + your unfinished jobs (pure read)",
     more: [
       "Start every session with this. Bare: lists every ask with thread activity —",
       "answers and verdicts verbatim, plus the exact next command for each.",
       "With an ask id: the full handoff package — the ask, the whole thread, and its",
       "attached artifacts.",
-      "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged",
-      "+ unfinished jobs (in-flight runs — your past self's work; finish or settle).",
-      "Reads only — recording a chat reply is figs answer; closing is figs close / figs report.",
+      "Scope: THIS agent's open asks + their replies + unfinished jobs (in-flight runs).",
+      "When linked, a soft messages-only down-sync runs first (degrades loudly, never blocks;",
+      "--no-sync to skip). Reads only — recording a chat reply is figs answer; closing is figs close.",
     ],
     eg: "figs inbox",
   },
@@ -623,10 +623,11 @@ function authHeaders(token) {
 }
 
 const REQUEST_TIMEOUT_MS = 30000
+const SYNC_TIMEOUT_MS = 5000 // session-start sync degrades fast, never blocks
 /** `fetch` with a hard timeout so a hung server never stalls the agent. */
-async function fetchT(url, opts = {}) {
+async function fetchT(url, opts = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const ctrl = new AbortController()
-  const t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS)
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     return await fetch(url, { ...opts, signal: ctrl.signal })
   } finally {
@@ -1402,13 +1403,63 @@ function nextMove(ask, replies) {
 }
 
 /**
- * `figs inbox` — session start, a pure local read. Bare: open asks grouped by
- * reply state + unfinished jobs, each with its next command. With an id: routes
- * to `figs show <id>` (the magnifier).
+ * The one thing that flows DOWN (spec v2 §8): this agent's human messages,
+ * merged into `messages.jsonl` (append-if-id-absent). Soft — it never blocks
+ * the inbox; returns a status the caller surfaces. Runs only when linked + a
+ * token is present. The trust grade is the server's to enforce (it forces
+ * `source:"chat"` on transcriptions); the CLI just folds messages in by id.
+ */
+async function syncMessages() {
+  const config = readJson(join(repoDir, "config.json"), {})
+  if (!config.workspaceId) return { ran: false, reason: "local" }
+  const token = getToken()
+  if (!token) return { ran: false, reason: "not logged in" }
+  const base = resolveEndpoint()
+  let res
+  try {
+    res = await fetchT(
+      `${base}/api/messages?agent=${config.agentId}`,
+      { headers: authHeaders(token) },
+      SYNC_TIMEOUT_MS,
+    )
+  } catch (e) {
+    return { ran: false, reason: `couldn't reach ${base} (${netReason(e)})` }
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => "")
+    return { ran: false, reason: `sync failed (${res.status})${t ? `: ${t.slice(0, 120)}` : ""}` }
+  }
+  let data
+  try {
+    data = await res.json()
+  } catch {
+    return { ran: false, reason: "sync returned non-JSON" }
+  }
+  const incoming = Array.isArray(data.messages) ? data.messages : []
+  const have = new Set(readJsonl("messages.jsonl").map((m) => m.id))
+  let added = 0
+  for (const m of incoming) {
+    if (!m?.id || have.has(m.id)) continue // immutable + id-keyed → dedup is exact
+    appendJsonl("messages.jsonl", m)
+    have.add(m.id)
+    added++
+  }
+  return { ran: true, added, truncated: Boolean(data.truncated) }
+}
+
+/**
+ * `figs inbox` — session start. When linked, a soft messages-only down-sync
+ * runs first (degradable; loud on failure/truncation), then everything is a
+ * local read: open asks grouped by reply state + unfinished jobs, each with its
+ * next command. With an id: routes to `figs show <id>` (the magnifier).
  */
 async function inboxCmd() {
   requireFigs()
   if (positional()) return showCmd() // `figs inbox <id>` → show
+
+  // Down-sync first (unless --no-sync): a stale inbox that says "nothing needs
+  // you" is the worst failure mode, so we touch the network here — softly.
+  const sync = hasFlag("--no-sync") ? { ran: false, reason: "skipped" } : await syncMessages()
 
   const asks = foldById(readJsonl("asks.jsonl"))
   const messages = readJsonl("messages.jsonl")
@@ -1424,23 +1475,36 @@ async function inboxCmd() {
   )
   const quiet = open.filter(({ replies }) => !replies.length)
 
+  // Orphan replies: a synced message whose ask isn't in this copy's journal
+  // (a fresh clone). Surface it — never silently drop a human's reply.
+  const localAskIds = new Set(asks.map((a) => a.id))
+  const orphanAskIds = [...new Set(messages.map((m) => m.ask).filter((id) => id && !localAskIds.has(id)))]
+
+  // Warnings the agent can act on without scraping stderr.
+  const warnings = []
+  if (sync.ran && sync.truncated) {
+    warnings.push("sync incomplete — the server returned a partial set; some replies may be missing")
+  } else if (!sync.ran && sync.reason !== "local" && sync.reason !== "skipped") {
+    warnings.push(`showing local state — couldn't sync (${sync.reason})`)
+  }
+
   if (hasFlag("--json")) {
-    const sync = { ran: false, reason: isLinked() ? "not-implemented-yet" : "local" }
     return printJson(
       {
         asks: open.map(({ a, replies }) => ({
           id: a.id, type: a.type, title: a.title, status: a.status ?? "open", replies,
         })),
         jobs,
+        orphanAsks: orphanAskIds,
         sync,
       },
-      // A degraded/absent sync is surfaced as a warning so an agent can detect
-      // it without scraping stderr (loud once the linked sync lands).
-      { warnings: isLinked() && !sync.ran ? ["sync did not run — showing local state only"] : [] },
+      { warnings },
     )
   }
 
-  if (open.length === 0 && jobs.length === 0) {
+  for (const w of warnings) console.warn(`figs: ! ${w}`)
+
+  if (open.length === 0 && jobs.length === 0 && orphanAskIds.length === 0) {
     console.log("figs: ✓ inbox empty — no open asks, no unfinished jobs, nothing needs you")
     return
   }
@@ -1464,6 +1528,10 @@ async function inboxCmd() {
       console.log(`    · ${j.id}${j.result ? ` — ${j.result}` : ""} (last update ${agoStr(j.ts)})`)
       console.log(`      → continue it (\`figs checkpoint --id ${j.id}\` as you go); \`figs report --id ${j.id}\` settles it`)
     }
+  }
+  if (orphanAskIds.length) {
+    console.log(`\n  Replies on asks not in this copy's journal (raised elsewhere — full context in the app):`)
+    for (const id of orphanAskIds) console.log(`    · ${id}  → figs show ${id}`)
   }
 }
 
