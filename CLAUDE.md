@@ -51,14 +51,13 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 
 ## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
 
-Original audit gaps 1–5 (account-gated init/doctor/writes, error chains, fully-remote
-inbox) are **fixed** on `redesign/v1` (steps 1 + 3 core). Remaining for the 1.0.0 wave:
+Original audit gaps 1–5 fixed; **steps 1, 3 (core + attachments), and 4 (auth) are done
+and committed on `redesign/v1` (96 tests green).** The whole LOCAL product + auth work.
+Remaining for the 1.0.0 wave:
 
-- [ ] **Auth** (step 4): custom `x-figs-token` header (→ `Authorization: Bearer`, dual-accept); single endpoint-blind token in `~/.figs/credentials.json` (→ keyed by endpoint origin); `figs_` prefix.
-- [ ] **Attachments** (step 3 tail): writers still emit run `artifact`/`artifacts` + ask `refs`; unify to `attachments[]` on report/checkpoint/ask/close; expand to download-only types (xlsx/csv/pdf/docx); raise cap to ~10MB. (Reads already handle both shapes.)
-- [ ] **Linked down-sync** (step 3 tail): `inbox` is pure-local; add the soft, messages-only down-sync when linked (server replies → `messages.jsonl`), loud on failure/truncation.
-- [ ] **`--json` envelope** (step 2 tail): unify `{ok,data,warnings}` across status/version/doctor (inbox/show already emit JSON).
-- [ ] **Ship**: SPEC v2, docs flip, cross-repo onramps, merge `redesign/v1`, publish 1.0.0.
+- [ ] **Linked down-sync** (step 3 tail) — **needs the app thread**: `inbox` is pure-local; add the soft, messages-only down-sync when linked (a GET returning this agent's human messages → merged into `messages.jsonl`, dedup by id, loud on failure/truncation). Coordinate the exact endpoint shape with the app thread before building — don't define it unilaterally.
+- [ ] **`--json` envelope** (step 2 tail): unify `{ok,data,warnings}` across status/version/doctor (inbox/show already emit JSON). Bundle with the help-regroup polish.
+- [ ] **Ship**: SPEC v2, docs flip (README local-first quickstart, GUIDE, llms.txt, help regroup), cross-repo onramps, merge `redesign/v1`, publish 1.0.0.
 
 ## Working rules
 
