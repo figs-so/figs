@@ -51,13 +51,13 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 
 ## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
 
-Original audit gaps 1–5 fixed; **steps 1, 3 (core + attachments), and 4 (auth) are done
-and committed on `redesign/v1` (96 tests green).** The whole LOCAL product + auth work.
-Remaining for the 1.0.0 wave:
+Original audit gaps 1–5 fixed. **Done + committed on `redesign/v1` (99 tests green):** steps 1,
+2 (`--json` envelope), 3 (core + attachments), 4 (auth), help-regroup, **SPEC v2**, **README
+flip**. The whole LOCAL product works; auth + the public docs are current. Remaining:
 
-- [ ] **Linked down-sync** (step 3 tail) — **needs the app thread**: `inbox` is pure-local; add the soft, messages-only down-sync when linked (a GET returning this agent's human messages → merged into `messages.jsonl`, dedup by id, loud on failure/truncation). Coordinate the exact endpoint shape with the app thread before building — don't define it unilaterally.
-- [ ] **`--json` envelope** (step 2 tail): unify `{ok,data,warnings}` across status/version/doctor (inbox/show already emit JSON). Bundle with the help-regroup polish.
-- [ ] **Ship**: SPEC v2, docs flip (README local-first quickstart, GUIDE, llms.txt, help regroup), cross-repo onramps, merge `redesign/v1`, publish 1.0.0.
+- [ ] **Linked down-sync** (step 3 tail) — **needs the app thread**: `inbox` is pure-local; add the soft, messages-only down-sync when linked (a GET returning this agent's human messages → merged into `messages.jsonl`, dedup by id, loud on failure/truncation). Coordinate the exact endpoint shape with the app thread; do NOT define it unilaterally.
+- [ ] **`GUIDE.md` deep rewrite + `llms.txt`** — the long agent guide still describes the old model (resolve/needs-decision/workspaces/one-way). Best done once the down-sync is final. (`llms.txt` is app-served — app thread.)
+- [ ] **Ship**: cross-repo onramps (`create-openfigs` → `figs init` first; `openfigs` template GUIDE), HQ `docs/architecture.md`, merge `redesign/v1`, publish 1.0.0.
 
 ## Working rules
 
