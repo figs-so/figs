@@ -51,13 +51,13 @@ exits non-zero in local mode without an unmeetable declared intent is a release 
 
 ## Known gaps (delete each line as it's fixed — full design in `REDESIGN.md`)
 
-Original audit gaps 1–5 fixed. **Done + committed on `redesign/v1` (99 tests green):** steps 1,
-2 (`--json` envelope), 3 (core + attachments), 4 (auth), help-regroup, **SPEC v2**, **README
-flip**. The whole LOCAL product works; auth + the public docs are current. Remaining:
+**CLI dev is functionally complete on `redesign/v1` (106 tests green).** Done + committed:
+steps 1, 2 (`--json` envelope), 3 (core + attachments + **the linked down-sync**, reviewed
+against the app's shipped `GET /api/messages` contract), 4 (auth), help-regroup, **SPEC v2**,
+**README flip**. The whole loop — local AND linked — works end to end. Remaining is docs + ship:
 
-- [ ] **Linked down-sync** (step 3 tail) — **needs the app thread**: `inbox` is pure-local; add the soft, messages-only down-sync when linked (a GET returning this agent's human messages → merged into `messages.jsonl`, dedup by id, loud on failure/truncation). Coordinate the exact endpoint shape with the app thread; do NOT define it unilaterally.
-- [ ] **`GUIDE.md` deep rewrite + `llms.txt`** — the long agent guide still describes the old model (resolve/needs-decision/workspaces/one-way). Best done once the down-sync is final. (`llms.txt` is app-served — app thread.)
-- [ ] **Ship**: cross-repo onramps (`create-openfigs` → `figs init` first; `openfigs` template GUIDE), HQ `docs/architecture.md`, merge `redesign/v1`, publish 1.0.0.
+- [ ] **`GUIDE.md` deep rewrite + `llms.txt`** (deferred to the end by Wayne) — the long agent guide still describes the old model. (`llms.txt` is app-served — app thread.)
+- [ ] **Ship**: cross-repo onramps (`create-openfigs` → `figs init` first; `openfigs` template GUIDE), HQ `docs/architecture.md`, bump `package.json` to 1.0.0, merge `redesign/v1`, publish (needs Wayne's OK — outward).
 
 ## Working rules
 
