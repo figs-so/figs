@@ -7,8 +7,10 @@
  *   figs report --result '…'            settle a job (stamps id/ts, --attach files)
  *   figs checkpoint --id … --note '…'   save a job's progress mid-flight (opens it in-flight)
  *   figs ask <type> --title '…'         raise an ask (self-contained: options/details/attachments)
- *   figs inbox [<ask-id>]               what needs you (pure read)
- *   figs resolve <ask-id>               close an ask (cites the answer it acted on)
+ *   figs answer <ask-id> --by '…'       record your human's reply to an ask (you run it, not them)
+ *   figs inbox [<ask-id>]               what needs you (pure local read)
+ *   figs show <id>                      magnify one ask or job (thread/trail + attachments)
+ *   figs close <ask-id>                 close an ask (derives the close from the reply, cites it)
  *   figs doctor                         validate .figs/ against the spec — runs account-free
  *   figs status                         local/linked + agent state               [--json]
  *   figs version                        print the CLI version (offline; --check for updates)
@@ -147,7 +149,7 @@ const COMMANDS = {
       "so \"($4,474.63)\" reaches figs as \"(,474.63)\": silent corruption.",
       "--attach <file> (repeatable) copies the file into artifacts/ and links it.",
       "--no-push writes locally only; `figs push` publishes later.",
-      "Closing an ask is `figs resolve` — a close is not a job; never report one.",
+      "Closing an ask is `figs close` — a close is not a job; never report one.",
       "Hand-writing runs.jsonl works too — this verb is sugar over the same file.",
     ],
     eg: "figs report --id recon-acme-2026-11 --result '88% matched · 31 flagged' --attach ./acme-2025-11.html",
@@ -204,36 +206,70 @@ const COMMANDS = {
     ],
     eg: "figs ask sign-off --title 'Send 10 payment reminders' --attach ./previews.html --on-approve 'Send the 10 reminder emails' --on-approve 'Mark the invoices chased' --run recon-2026-06",
   },
+  answer: {
+    args: "<ask-id> --by <who> (--chosen <option> | --text <reply> | --approve | --request-changes | --reject)",
+    flags: [
+      "--by", "--chosen", "--text", "--approve", "--request-changes", "--reject", "--no-push",
+    ],
+    desc: "record your human's out-of-band reply to an ask, verbatim (you run this, not them)",
+    more: [
+      "Humans don't type commands. They answer you in chat ('approved — only the 15');",
+      "you transcribe that into the record. --by names the HUMAN who said it, not you.",
+      "question → --chosen '<option verbatim>' (checked against the ask's options) or",
+      "--text '<what they said>'. sign-off → --approve | --request-changes | --reject",
+      "(a qualified verdict may also carry --chosen). Transcribe verbatim — never summarize,",
+      "never author the reply yourself.",
+      "Replies made IN the app sync down automatically (figs inbox) — `figs answer` is only",
+      "for replies that exist nowhere but your chat.",
+      "Then act, and `figs close <ask-id>` — it cites this reply automatically.",
+    ],
+    eg: "figs answer acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'",
+  },
   inbox: {
     args: "[<ask-id>] [--json]",
     flags: ["--json"],
-    desc: "what needs you — your humans' answers/verdicts on your asks (pure read)",
+    desc: "what needs you — your humans' replies on your asks + your unfinished jobs (pure read)",
     more: [
       "Start every session with this. Bare: lists every ask with thread activity —",
       "answers and verdicts verbatim, plus the exact next command for each.",
       "With an ask id: the full handoff package — the ask, the whole thread, and its",
-      "attached artifacts restored into .figs/artifacts/ (hash-verified) so a fresh",
-      "session can act from the record alone.",
+      "attached artifacts.",
       "Scope: THIS agent's open asks + human-rejected ones you haven't acknowledged",
       "+ unfinished jobs (in-flight runs — your past self's work; finish or settle).",
-      "Reads only — closing still happens via figs resolve / figs report.",
+      "Reads only — recording a chat reply is figs answer; closing is figs close / figs report.",
     ],
     eg: "figs inbox",
   },
-  resolve: {
-    args: "<ask-id> [--chosen <option>] [--by <who>] [--note <text>] [--withdrawn|--rejected]",
-    flags: ["--chosen", "--by", "--note", "--withdrawn", "--rejected", "--no-push"],
-    desc: "close an ask — appends the resolution fold line and pushes",
+  show: {
+    args: "<ask-id|job-id> [--json]",
+    flags: ["--json"],
+    desc: "magnify one ask or job — the folded record + its thread/trail + attachments (pure local)",
     more: [
-      "--chosen must quote one of the ask's options[] verbatim (checked).",
-      "Three closes, by who ended it: resolved (default — the need was met) ·",
-      "--withdrawn (YOU retracted it; nobody acted) · --rejected (a HUMAN declined",
-      "it — record their out-of-band no; rejected is terminal, re-raising = a new ask).",
-      "After an answer, fork on what it unlocked: nothing new → resolve right away;",
-      "real work → do the job, `figs report` it under its own id, THEN resolve —",
-      "cite the job id in --note so a reader can find the work.",
+      "Auto-detects an ask (shows the reply thread) or a job (shows its checkpoint trail).",
+      "Reads local files and folds them for you — no raw-JSONL spelunking. No network:",
+      "an attachment not on this machine is noted (view it in the app), never downloaded.",
     ],
-    eg: "figs resolve acme-bridge --chosen 'Strip the alpha prefix' --by 'Sarah (accounting)'",
+    eg: "figs show acme-bridge",
+  },
+  close: {
+    args: "<ask-id> [--note <text>] [--run <run-id>] [--withdrawn]",
+    flags: [
+      "--note", "--run", "--withdrawn", "--no-push",
+      // accepted-but-removed: handled with a teaching error pointing to the new path
+      "--chosen", "--by", "--answer-id", "--rejected",
+    ],
+    desc: "close an ask — derives the close from the reply on file and cites it",
+    more: [
+      "A pure close: it reads the newest reply for the ask (recorded by `figs answer`",
+      "or synced from the app) and derives the outcome — resolved on an answer/approval,",
+      "rejected on a reject verdict; it refuses if nothing's answered yet, or if changes",
+      "were requested (revise and re-raise on the same id instead).",
+      "--run <run-id> links the JOB the reply set in motion (so a reader sees what you did).",
+      "--withdrawn = YOU retracted the ask (no reply needed; nobody acted).",
+      "After an answer, fork on what it unlocked: nothing new → close right away;",
+      "real work → do the job, `figs report` it under its own id, then close --run <that id>.",
+    ],
+    eg: "figs close acme-bridge --run apply-bridge-2026-06",
   },
   doctor: {
     args: "",
@@ -430,9 +466,48 @@ function validateAsk(a) {
   }
   return issues
 }
-/** Validate the whole local outbox (folded) — returns all issues. */
-function validateOutbox(runs, asks) {
-  return [...runs.flatMap(validateRun), ...asks.flatMap(validateAsk)]
+// ---------- messages.jsonl — the human ledger -------------------------------
+// Human replies to asks: answers + verdicts (later: note/directive). Events,
+// not records — immutable, ids minted once, they accumulate (no fold). `source`
+// is *where* a reply arrived, display only — the verified grade comes from mint
+// origin (server-minted = attested; pushed-up = transcription), never `source`.
+const MSG_KINDS = ["answer", "verdict"]
+const VERDICTS = ["approved", "changes-requested", "rejected"]
+const MSG_SOURCES = ["app", "chat"]
+/** Validate one message event → array of issue strings. */
+function validateMessage(m) {
+  const issues = []
+  const label = `message "${m.id ?? "?"}"`
+  if (!m.id || typeof m.id !== "string") issues.push(`${label}: missing required "id"`)
+  if (!m.ask || typeof m.ask !== "string") issues.push(`${label}: missing required "ask" (the ask id this replies to)`)
+  if (!m.ts) issues.push(`${label}: missing required "ts"`)
+  if (!m.by) issues.push(`${label}: missing required "by" (who said it — the human, not you)`)
+  checkEnum(issues, m, "kind", MSG_KINDS, label)
+  checkEnum(issues, m, "verdict", VERDICTS, label)
+  checkEnum(issues, m, "source", MSG_SOURCES, label)
+  if (m.kind === "verdict" && !m.verdict) {
+    issues.push(`${label}: a verdict message needs "verdict" (${VERDICTS.join(" / ")})`)
+  }
+  if (m.kind === "answer" && !m.chosen && !m.text) {
+    issues.push(`${label}: an answer needs "chosen" or "text"`)
+  }
+  return issues
+}
+
+/** Validate the whole local outbox (folded records + message events). */
+function validateOutbox(runs, asks, messages = []) {
+  return [
+    ...runs.flatMap(validateRun),
+    ...asks.flatMap(validateAsk),
+    ...messages.flatMap(validateMessage),
+  ]
+}
+/** Does an ask with this id exist locally — raised here, or known via a message? */
+function askExistsLocally(askId) {
+  return (
+    foldById(readJsonl("asks.jsonl")).some((a) => a.id === askId) ||
+    readJsonl("messages.jsonl").some((m) => m.ask === askId)
+  )
 }
 function getToken() {
   return process.env.FIGS_TOKEN || readJson(globalCreds, {}).token
@@ -637,8 +712,10 @@ else if (COMMANDS[cmd]) {
   else if (cmd === "report") await reportCmd()
   else if (cmd === "checkpoint") await checkpointCmd()
   else if (cmd === "ask") await askCmd()
+  else if (cmd === "answer") await answerCmd()
   else if (cmd === "inbox") await inboxCmd()
-  else if (cmd === "resolve") await resolveCmd()
+  else if (cmd === "show") await showCmd()
+  else if (cmd === "close") await closeCmd()
   else if (cmd === "doctor") await doctor()
   else if (cmd === "push") await push()
 } else {
@@ -1201,7 +1278,11 @@ function warnEatenDollar(...texts) {
   }
 }
 
-// ---------- the inbox (the DOWN direction — a pure read) ---------------------
+// ---------- the inbox + show (the DOWN view — pure local reads) -------------
+// Everything here reads local files: in-flight jobs (runs.jsonl), open asks
+// (asks.jsonl), reply threads (messages.jsonl). No win-logic — the agent gets
+// the complete, time-ordered truth and judges. (The soft messages-only
+// down-sync when linked is layered on top in a later step.)
 
 /** Relative time for inbox lines — rough on purpose. */
 function agoStr(iso) {
@@ -1210,284 +1291,365 @@ function agoStr(iso) {
   if (mins < 60 * 48) return `${Math.round(mins / 60)}h ago`
   return `${Math.round(mins / 1440)}d ago`
 }
-
-/** Fetch this agent's inbox; null on any failure when `soft` (auto-cite path). */
-async function fetchInbox({ soft = false } = {}) {
-  const config = readJson(join(repoDir, "config.json"), {})
-  if (!config.agentId) {
-    if (soft) return null
-    die("config missing agentId — run `figs init`")
-  }
-  const r = await request("GET", `/api/inbox?agent=${config.agentId}`)
-  if (!r.ok) {
-    if (soft) return null
-    die(`inbox failed (${r.status || "network"}): ${r.data.error ?? r.data.raw ?? ""}`)
-  }
-  return r.data
+/** Replies for an ask, oldest-first (messages accumulate; order by ts). */
+function repliesFor(messages, askId) {
+  return messages
+    .filter((m) => m.ask === askId)
+    .sort((a, b) => new Date(a.ts) - new Date(b.ts))
 }
-
-/** One human event, verbatim — answers are instructions; never paraphrase them. */
-function eventLine(e) {
+/** One reply, verbatim — never paraphrase a human's words. `(transcribed)`
+ *  marks a chat reply (self-reported); app replies are attested by mint origin. */
+function messageLine(m) {
   const head =
-    e.kind === "verdict"
-      ? `${e.verdict.replace(/_/g, " ")} by ${e.byName} (${e.asRole})`
-      : `answered by ${e.byName} (${e.asRole})`
-  const body = [e.chosen ? `→ "${e.chosen}"` : null, e.text ? `"${e.text}"` : null]
+    m.kind === "verdict"
+      ? `${String(m.verdict).replace(/-/g, " ")} by ${m.by}`
+      : `answered by ${m.by}`
+  const grade = m.source === "app" ? "" : " (transcribed)"
+  const body = [m.chosen ? `→ "${m.chosen}"` : null, m.text ? `"${m.text}"` : null]
     .filter(Boolean)
     .join(" · ")
-  return `${head} · ${agoStr(e.createdAt)}${body ? `\n      ${body}` : ""}`
+  return `${head}${grade} · ${agoStr(m.ts)}${body ? `\n      ${body}` : ""}`
 }
-
-/** The type×state matrix → the exact next command. The stranger never needs
- *  to know the state machine — the protocol tells them their move. */
-function nextMove(a) {
-  if (a.status === "rejected") {
-    return `a human declined this — acknowledge it: figs resolve ${a.id} --rejected`
-  }
-  const last = a.events[a.events.length - 1]
-  if (!last) return "waiting on your human — nothing for you to do"
-  if (last.kind === "verdict" && last.verdict === "approved") {
-    // A qualified verdict carries the chosen answer path — cite it in the close.
-    const chosen = last.chosen ? ` --chosen '${last.chosen}'` : ""
-    return (
-      `approved — verify any prerequisites in the ask, then fork on what it unlocked:` +
-      `\n      nothing left to do → figs resolve ${a.id}${chosen}` +
-      `\n      real work → do the job, figs report it under its own --id, then figs resolve ${a.id}${chosen} --note 'job <id>'`
-    )
-  }
-  if (last.kind === "verdict" && last.verdict === "changes_requested") {
-    return `revise, then re-raise on the same id: figs ask ${a.type} --id ${a.id} --title '…' …`
-  }
-  if (last.chosen) {
-    // Pre-fill the cited option verbatim — the note is substance for --note, never for --chosen.
-    const note = last.text ? ` --note '…'` : ""
-    return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --chosen '${last.chosen}'${note}`
-  }
-  return `act on the answer (real work → figs report it under its own --id), then: figs resolve ${a.id} --note '…'`
+/** Attachments on a record — the new `attachments[]`, falling back to the old
+ *  run `artifact`/`artifacts` and ask `refs` shapes (forward-compatible reads). */
+function attachmentsOf(rec) {
+  if (Array.isArray(rec.attachments)) return rec.attachments
+  return [
+    ...[rec.artifact, ...(rec.artifacts ?? [])].filter(Boolean),
+    ...(rec.refs ?? []).map((r) => r?.artifact).filter(Boolean),
+  ]
 }
-
-/** Restore an ask's refs into artifacts/ — hash-verified; never clobbers. */
-async function fetchRefs(config, refs) {
-  for (const ref of refs ?? []) {
-    if (!ref.artifact) continue
-    const name = ref.artifact
-    let res
-    try {
-      res = await fetchT(
-        `${resolveEndpoint()}/api/artifacts/raw?agent=${config.agentId}&name=${encodeURIComponent(name)}`,
-        { headers: { "x-figs-token": getToken() } },
-      )
-    } catch (e) {
-      console.warn(`figs: ! couldn't fetch artifacts/${name} (${netReason(e)})`)
-      continue
-    }
-    if (!res.ok) {
-      console.warn(`figs: ! couldn't fetch artifacts/${name} (${res.status})`)
-      continue
-    }
-    const bytes = Buffer.from(await res.arrayBuffer())
-    const want = res.headers.get("x-figs-sha256")
-    if (want && createHash("sha256").update(bytes).digest("hex") !== want) {
-      console.warn(`figs: ! artifacts/${name}: bytes didn't match the server's hash — skipped`)
-      continue
-    }
-    const dest = join(repoDir, "artifacts", name)
-    if (existsSync(dest)) {
-      if (readFileSync(dest).equals(bytes)) {
-        console.log(`figs:   ✓ artifacts/${name} (already present)`)
-      } else {
-        console.warn(
-          `figs: ! artifacts/${name} exists locally with different content — left untouched (the published copy stays one fetch away)`,
-        )
-      }
-      continue
-    }
-    mkdirSync(join(repoDir, "artifacts"), { recursive: true })
-    writeFileSync(dest, bytes)
-    console.log(`figs:   ✓ artifacts/${name} (fetched, hash ok)`)
+/** The newest reply on an ask → the exact next command. */
+function nextMove(ask, replies) {
+  const last = replies[replies.length - 1]
+  if (!last) {
+    return "waiting on your human — relay the ask to them in chat; record their reply with `figs answer`"
   }
+  if (last.kind === "verdict" && last.verdict === "changes-requested") {
+    return `changes requested — revise, then re-raise on the same id: figs ask ${ask.type ?? "sign-off"} --id ${ask.id} --title '…' …`
+  }
+  if (last.kind === "verdict" && last.verdict === "rejected") {
+    return `declined — acknowledge it: figs close ${ask.id}`
+  }
+  return `act on it (real work → figs report it under its own --id), then: figs close ${ask.id}${"" /* --run <job> when work was done */}`
 }
 
 /**
- * `figs inbox` — session start. Bare: every ask with thread activity + the
- * next command for each. With an id: the zero-context handoff package (the
- * ask, the whole thread verbatim, refs restored to disk). Pure read — writes
- * nothing to the outbox; closing happens via resolve.
+ * `figs inbox` — session start, a pure local read. Bare: open asks grouped by
+ * reply state + unfinished jobs, each with its next command. With an id: routes
+ * to `figs show <id>` (the magnifier).
  */
 async function inboxCmd() {
   requireFigs()
-  const config = readJson(join(repoDir, "config.json"), {})
-  const data = await fetchInbox()
-  const items = data.asks ?? []
-  const askId = positional()
+  if (positional()) return showCmd() // `figs inbox <id>` → show
 
-  if (hasFlag("--json") && !askId) {
-    console.log(JSON.stringify(data, null, 2))
+  const asks = foldById(readJsonl("asks.jsonl"))
+  const messages = readJsonl("messages.jsonl")
+  const jobs = foldById(readJsonl("runs.jsonl")).filter((r) => r.state === "in-flight")
+  const open = asks
+    .filter((a) => (a.status ?? "open") === "open")
+    .map((a) => ({ a, replies: repliesFor(messages, a.id) }))
+  const answered = open.filter(
+    ({ replies }) => replies.length && replies[replies.length - 1].verdict !== "changes-requested",
+  )
+  const changes = open.filter(
+    ({ replies }) => replies.length && replies[replies.length - 1].verdict === "changes-requested",
+  )
+  const quiet = open.filter(({ replies }) => !replies.length)
+
+  if (hasFlag("--json")) {
+    console.log(
+      JSON.stringify(
+        {
+          asks: open.map(({ a, replies }) => ({
+            id: a.id, type: a.type, title: a.title, status: a.status ?? "open", replies,
+          })),
+          jobs,
+          sync: { ran: false, reason: isLinked() ? "not-implemented-yet" : "local" },
+        },
+        null,
+        2,
+      ),
+    )
     return
   }
 
-  if (askId) {
-    const a = items.find((x) => x.id === askId)
-    if (!a) {
-      die(
-        `ask "${askId}" isn't in your inbox (open asks + unacknowledged rejections only — closed history lives in the app)`,
-      )
-    }
-    console.log(`figs: ${a.title}`)
-    console.log(`      ${a.type} · ${a.status}${a.to ? ` · for the ${a.to}` : ""} · raised ${agoStr(a.ts)}`)
-    if (a.found) console.log(`\n  What it found:\n      ${a.found}`)
-    if (a.need) console.log(`\n  What it needs:\n      ${a.need}`)
-    if (a.options?.length) {
-      console.log(`\n  Options (answers cite these verbatim):`)
-      for (const o of a.options) console.log(`      · ${o}`)
-    }
-    if (a.details?.length) {
-      console.log(`\n  Details:`)
-      for (const d of a.details) console.log(`      ${d.l}: ${d.v}`)
-    }
-    if (a.events.length) {
-      console.log(`\n  THE THREAD (your humans' words, verbatim):`)
-      for (const e of a.events) console.log(`    · ${eventLine(e)}`)
-    } else {
-      console.log(`\n  No answer yet.`)
-    }
-    if (a.refs?.length) {
-      console.log(`\n  Attached artifacts (restoring to .figs/artifacts/):`)
-      await fetchRefs(config, a.refs)
-    }
-    console.log(`\n  → next: ${nextMove(a)}`)
-    return
-  }
-
-  if (data.truncated) {
-    console.warn(`figs: ! showing the first ${items.length} — more exist (close some asks)`)
-  }
-  const jobs = data.jobs ?? []
-  if (items.length === 0 && jobs.length === 0) {
+  if (open.length === 0 && jobs.length === 0) {
     console.log("figs: ✓ inbox empty — no open asks, no unfinished jobs, nothing needs you")
     return
   }
-  const rejected = items.filter((a) => a.status === "rejected")
-  const answered = items.filter((a) => a.status === "open" && a.events.length > 0)
-  const quiet = items.filter((a) => a.status === "open" && a.events.length === 0)
   console.log(
-    `figs: inbox — ${answered.length} answered · ${rejected.length} rejected to acknowledge · ${quiet.length} waiting on your human` +
+    `figs: inbox — ${answered.length} answered · ${changes.length} need revision · ${quiet.length} waiting on your human` +
       (jobs.length ? ` · ${jobs.length} job${jobs.length === 1 ? "" : "s"} in flight` : ""),
   )
-  const printItem = (a) => {
-    const last = a.events[a.events.length - 1]
-    console.log(`\n  ${a.id} · ${a.type} — ${a.title}`)
-    if (last) console.log(`    ${eventLine(last)}`)
-    console.log(`    → ${nextMove(a)}${a.events.length > 1 ? `   (full thread: figs inbox ${a.id})` : ""}`)
+  const printItem = ({ a, replies }) => {
+    console.log(`\n  ${a.id} · ${a.type ?? "?"} — ${a.title ?? ""}`)
+    if (replies.length) console.log(`    ${messageLine(replies[replies.length - 1])}`)
+    console.log(`    → ${nextMove(a, replies)}${replies.length > 1 ? `   (full thread: figs show ${a.id})` : ""}`)
   }
-  for (const a of [...rejected, ...answered]) printItem(a)
+  for (const item of [...answered, ...changes]) printItem(item)
   if (quiet.length) {
-    console.log(`\n  Waiting on your human (nothing for you to do):`)
-    for (const a of quiet) console.log(`    · ${a.id} · ${a.type} — ${a.title} (raised ${agoStr(a.ts)})`)
+    console.log(`\n  Waiting on your human — relay these in chat, then \`figs answer\` their reply:`)
+    for (const { a } of quiet) console.log(`    · ${a.id} · ${a.type ?? "?"} — ${a.title ?? ""} (raised ${a.ts ? agoStr(a.ts) : "—"})`)
   }
   if (jobs.length) {
     console.log(`\n  Unfinished jobs — in flight (your past self's work; finish or settle):`)
     for (const j of jobs) {
-      console.log(
-        `    · ${j.id}${j.result ? ` — ${j.result}` : ""} (last update ${agoStr(j.updatedAt ?? j.ts)})`,
-      )
-      console.log(
-        `      → continue it (\`figs checkpoint --id ${j.id}\` as you go); \`figs report --id ${j.id}\` settles it`,
-      )
+      console.log(`    · ${j.id}${j.result ? ` — ${j.result}` : ""} (last update ${agoStr(j.ts)})`)
+      console.log(`      → continue it (\`figs checkpoint --id ${j.id}\` as you go); \`figs report --id ${j.id}\` settles it`)
     }
   }
 }
 
-// ---------- the resolution fold (`resolve` — the one closing verb) ----------
 /**
- * Build the closing fold line. Best-effort, the verified path: fetches this
- * agent's inbox and, when the ask has human events, cites the one acted on —
- * `via: "figs"` + `resolution.answer: <event-id>` (+ `by` from the event) —
- * attribution by mechanism, not testimony. An ask found on the server but
- * missing locally is appended first (its own bytes coming home), so the fold
- * lands on a complete record. Offline or any failure → today's self-reported
- * `via: "human"` path, unchanged.
+ * `figs show <id>` — the magnifier, pure local. Auto-detects an ask or a job
+ * and prints the folded record + its thread/trail + attachment names. No
+ * network: an attachment not on disk is noted (view it in the app), never
+ * downloaded — local is the source of truth.
  */
-async function buildResolution(askId, { chosen, by, note, withdrawn, rejected }) {
-  if (withdrawn && rejected) {
-    die("--withdrawn and --rejected are different closes: withdrawn = YOU retracted the ask; rejected = a HUMAN declined it. Pick the one that's true.")
-  }
-  if ((withdrawn || rejected) && chosen) {
-    die(`--chosen marks the need as met — it can't combine with ${withdrawn ? "--withdrawn" : "--rejected"} (use --note for the account)`)
-  }
-  const warnings = []
-  let ask = foldById(readJsonl("asks.jsonl")).find((a) => a.id === askId)
+function showCmd() {
+  requireFigs()
+  const id = positional()
+  if (!id) die("show needs an id: figs show <ask-id|job-id>")
+  const asks = foldById(readJsonl("asks.jsonl"))
+  const runs = foldById(readJsonl("runs.jsonl"))
+  const messages = readJsonl("messages.jsonl")
+  const ask = asks.find((a) => a.id === id)
+  const replies = repliesFor(messages, id)
 
-  // The verified path (soft — never blocks a close).
-  let serverAsk = null
-  if (getToken()) {
-    const inbox = await fetchInbox({ soft: true })
-    serverAsk = inbox?.asks?.find((a) => a.id === askId) ?? null
+  if (ask || replies.length) {
+    if (hasFlag("--json")) {
+      console.log(JSON.stringify({ ask: ask ?? null, replies }, null, 2))
+      return
+    }
+    if (ask) {
+      console.log(`figs: ${ask.title ?? id}`)
+      console.log(
+        `      ${ask.type ?? "?"} · ${ask.status ?? "open"}${ask.to ? ` · for the ${ask.to}` : ""}${ask.ts ? ` · raised ${agoStr(ask.ts)}` : ""}`,
+      )
+      if (ask.found) console.log(`\n  What it found:\n      ${ask.found}`)
+      if (ask.need) console.log(`\n  What it needs:\n      ${ask.need}`)
+      if (ask.options?.length) {
+        console.log(`\n  Options (a reply cites one verbatim):`)
+        for (const o of ask.options) console.log(`      · ${o}`)
+      }
+      if (ask.details?.length) {
+        console.log(`\n  Details:`)
+        for (const d of ask.details) console.log(`      ${d.l}: ${d.v}`)
+      }
+      showAttachments(ask)
+    } else {
+      console.log(`figs: ask ${id} — not in this copy's journal (full context in the app); showing the replies that are here`)
+    }
+    if (replies.length) {
+      console.log(`\n  THE THREAD (your humans' words, verbatim):`)
+      for (const m of replies) console.log(`    · ${messageLine(m)}`)
+    } else {
+      console.log(`\n  No reply yet.`)
+    }
+    console.log(`\n  → next: ${nextMove(ask ?? { id }, replies)}`)
+    return
   }
-  if (!ask && serverAsk) {
-    // Its own bytes coming home: append the record so the fold has something
-    // local to land on (the cross-machine close, solved inside the verb).
-    const record = { ...serverAsk }
-    delete record.events
-    delete record.updatedAt
-    if (record.resolution == null) delete record.resolution
-    appendJsonl("asks.jsonl", record)
-    warnings.push(`fetched "${askId}" from Figs (raised elsewhere) — recorded locally before closing`)
-    ask = record
-  } else if (!ask) {
-    warnings.push(
-      `ask "${askId}" isn't in the local asks.jsonl (raised on another machine, or pruned) — recording the close anyway; the server folds it onto the full record`,
+
+  const run = runs.find((r) => r.id === id)
+  if (run) {
+    const trail = readJsonl("runs.jsonl").filter((r) => r.id === id)
+    if (hasFlag("--json")) {
+      console.log(JSON.stringify({ run, trail }, null, 2))
+      return
+    }
+    console.log(`figs: job ${id}${run.unit ? ` · ${run.unit}` : ""}${run.period ? ` · ${run.period}` : ""}`)
+    console.log(`      ${run.state ?? "settled"}${run.status ? ` · ${run.status}` : ""} — ${run.result ?? ""}`)
+    console.log(`\n  Trail (each checkpoint/report at the moment it happened):`)
+    for (const l of trail) {
+      const atts = attachmentsOf(l)
+      console.log(
+        `    · ${l.ts ? agoStr(l.ts) : "—"} [${l.state ?? "settled"}] ${l.result ?? ""}${atts.length ? `  · ${atts.join(", ")}` : ""}`,
+      )
+    }
+    showAttachments(run)
+    return
+  }
+
+  die(`"${id}" isn't a run or an ask in this journal — \`figs inbox\` lists what's here`)
+}
+
+/** Print a record's attachments, noting any not present on this machine. */
+function showAttachments(rec) {
+  const names = attachmentsOf(rec)
+  if (!names.length) return
+  console.log(`\n  Attachments:`)
+  for (const name of names) {
+    const here = existsSync(join(repoDir, "artifacts", name))
+    console.log(`      · ${name}${here ? "" : "  (not in this copy — view it in the app)"}`)
+  }
+}
+
+// ---------- figs answer — record the human's reply (you run it, not them) ----
+/**
+ * `figs answer <ask-id>` transcribes a human's out-of-band reply into
+ * `messages.jsonl`. It's a plain writing verb (append + auto-push). `--by` names
+ * the HUMAN; the CLI stamps id/ts/source — the agent never authors plumbing.
+ */
+async function answerCmd() {
+  requireFigs()
+  const askId = positional()
+  if (!askId) {
+    die("answer needs the ask id: figs answer <ask-id> --by '<who>' (--chosen … | --text … | --approve|--request-changes|--reject)")
+  }
+  if (!askExistsLocally(askId)) {
+    die(`ask "${askId}" isn't in this journal — \`figs inbox\` shows your open asks. You record a human's reply to an ask YOU raised; you don't answer one that doesn't exist here.`)
+  }
+  const by = flag("--by")
+  if (!by) die("answer needs --by '<who said it>' — the human's name, not yours (you're transcribing their words)")
+
+  const verdicts = [
+    ["--approve", "approved"],
+    ["--request-changes", "changes-requested"],
+    ["--reject", "rejected"],
+  ].filter(([f]) => hasFlag(f))
+  if (verdicts.length > 1) die("pick one verdict: --approve | --request-changes | --reject")
+
+  const chosen = flag("--chosen")
+  const text = flag("--text")
+  const msg = {
+    id: genId("msg"),
+    kind: verdicts.length ? "verdict" : "answer",
+    ask: askId,
+    by,
+    ts: nowIso(),
+    source: "chat", // transcribed here; app-minted replies arrive via inbox sync
+  }
+  if (verdicts.length) msg.verdict = verdicts[0][1]
+  if (chosen) msg.chosen = chosen
+  if (text) msg.text = text
+  if (msg.kind === "answer" && !chosen && !text) {
+    die("answer needs --chosen '<option verbatim>' or --text '<what they said>' (or a verdict flag for a sign-off)")
+  }
+
+  // --chosen must quote one of the ask's options verbatim (when the ask is local).
+  if (chosen) {
+    const ask = foldById(readJsonl("asks.jsonl")).find((a) => a.id === askId)
+    const options = ask?.options ?? []
+    if (options.length && !options.includes(chosen)) {
+      const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
+      const near = options.find((o) => norm(o) === norm(chosen))
+      if (near) die(`--chosen must quote the option verbatim — did you mean "${near}"?`)
+      die(
+        `--chosen "${chosen}" doesn't match any of the ask's options:\n` +
+          options.map((o) => `    · ${o}`).join("\n") +
+          "\n  (quote one verbatim, or use --text for a free-text reply)",
+      )
+    }
+  }
+
+  // Double-transcription guard: a reply made in the app syncs down on its own,
+  // so re-typing it here would mint a duplicate (a weaker-grade copy).
+  const priorSame = readJsonl("messages.jsonl").some(
+    (m) =>
+      m.ask === askId &&
+      ((chosen && m.chosen === chosen) ||
+        (text && m.text === text) ||
+        (msg.verdict && m.verdict === msg.verdict)),
+  )
+  if (priorSame) {
+    console.warn(
+      "figs: ! a reply on this ask already carries that — replies made in the app sync down automatically; `figs answer` is only for replies that exist nowhere but your chat",
     )
   }
 
-  const options = ask?.options ?? serverAsk?.options ?? []
-  if (chosen && options.length && !options.includes(chosen)) {
-    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "")
-    const near = options.find((o) => norm(o) === norm(chosen))
-    if (near) die(`--chosen must quote the option verbatim — did you mean "${near}"?`)
-    die(
-      `--chosen "${chosen}" doesn't match any of the ask's options:\n` +
-        options.map((o) => `    · ${o}`).join("\n") +
-        "\n  (quote one verbatim, or use --note for a free-text account)",
-    )
+  warnEatenDollar(msg.chosen, msg.text)
+  const issues = validateMessage(msg)
+  if (issues.length) die(`not written:\n  ${issues.join("\n  ")}`)
+  appendJsonl("messages.jsonl", msg)
+  console.log(`figs: ✓ reply recorded — ${JSON.stringify(msg)}`)
+  console.log(
+    `figs:   transcribed ${by}'s reply. Act on it, then \`figs close ${askId}\` (it cites this) — real work first → report it, then \`figs close ${askId} --run <job>\`.`,
+  )
+  await autoPush()
+}
+
+// ---------- figs close — the one closing verb (derives from the reply) -------
+/** The old resolve surface → teaching errors (the migration path). A function,
+ *  not a top-level const: the CLI dispatches during module eval, so a const
+ *  declared after the dispatch block would still be in its TDZ when called. */
+function closeCutFlags() {
+  return {
+    "--chosen":
+      "replies are recorded with `figs answer <id> --chosen '…' --by '<who>'`; close only ends the ask (it cites the reply on file automatically)",
+    "--by":
+      "the answerer is named on the reply: `figs answer <id> … --by '<who>'`; close cites it automatically",
+    "--answer-id":
+      "close auto-cites the NEWEST reply on file — you don't name it",
+    "--rejected":
+      "record the human's reject as a verdict first: `figs answer <id> --reject --by '<who>'`, then `figs close <id>` derives 'rejected' from it",
   }
+}
+/** The teaching menu when an ask has no reply on file yet. */
+function closeMenu(askId) {
+  return (
+    `no reply on file for "${askId}" — close needs to know what happened:\n` +
+    `    · answered in chat?   → record it first: figs answer ${askId} --by '<who>' (--chosen … | --text …)\n` +
+    `    · YOU retracted it?   → figs close ${askId} --withdrawn\n` +
+    `    · cleared on its own? → figs close ${askId} --note '<what happened>'  (recorded via: self)`
+  )
+}
+async function closeCmd() {
+  requireFigs()
+  const askId = positional()
+  if (!askId) die("close needs the ask id: figs close <ask-id> [--note …] [--run …] [--withdrawn]")
+  // The old resolve surface → teaching errors (the migration path).
+  for (const [f, help] of Object.entries(closeCutFlags())) {
+    if (hasFlag(f) || flag(f) !== undefined) die(`\`${f}\` is gone — ${help}`)
+  }
+  if (!askExistsLocally(askId)) {
+    die(`ask "${askId}" isn't in this journal — \`figs inbox\` shows your open asks`)
+  }
+  const withdrawn = hasFlag("--withdrawn")
+  const note = flag("--note")
+  const runRef = flag("--run")
+  warnUnknownRun(runRef)
+
+  // The newest reply for this ask drives the close (messages accumulate; sort by ts).
+  const replies = readJsonl("messages.jsonl")
+    .filter((m) => m.ask === askId)
+    .sort((a, b) => new Date(a.ts) - new Date(b.ts))
+  const newest = replies[replies.length - 1]
 
   const resolution = {}
-  if (chosen) resolution.chosen = chosen
-  if (by) resolution.by = by
-  if (note) resolution.note = note
-  // `via` says where the unblock came from; out-of-band human answers are
-  // "human". A rejection is inherently a human's call; otherwise set it only
-  // when there's evidence of one (a chosen/by), never on withdrawn (nobody
-  // acted — that's the point).
-  if (rejected || (!withdrawn && (chosen || by))) resolution.via = "human"
-
-  // Cite the event acted on, when one exists: prefer the latest answer whose
-  // chosen matches, else the latest event (e.g. the approval, the rejection).
-  const events = serverAsk?.events ?? []
-  if (!withdrawn && events.length) {
-    // Any human event can carry the chosen path — an answer, or a qualified
-    // verdict (verdict + chosen together). Match on the text, not the kind.
-    const match = chosen ? [...events].reverse().find((e) => e.chosen === chosen) : null
-    const cited = match ?? events[events.length - 1]
+  let status
+  if (withdrawn) {
+    status = "withdrawn" // the agent's own act — no reply needed, nobody acted
+  } else if (!newest) {
+    if (!note) die(closeMenu(askId))
+    status = "resolved" // cleared on its own — self-reported
+    resolution.via = "self"
+  } else if (newest.kind === "verdict" && newest.verdict === "changes-requested") {
+    die(
+      `changes were requested on "${askId}" — revise and re-raise on the same id (\`figs ask sign-off --id ${askId} …\`); this isn't a close`,
+    )
+  } else {
+    // an answer, an approval, or a rejection — all derive a close, citing it
+    status = newest.verdict === "rejected" ? "rejected" : "resolved"
     resolution.via = "figs"
-    resolution.answer = cited.id
-    if (!by && cited.byName) resolution.by = cited.byName
+    resolution.answer = newest.id
+    if (newest.by) resolution.by = newest.by
+    if (newest.chosen) resolution.chosen = newest.chosen
   }
-
-  // The close's own clock — machine-stamped, never typed (same posture as the
-  // record `ts`). It lives INSIDE resolution so the fold can't collide with
-  // the record's raise `ts` (folds are field-level merges); the reader stamps
-  // its own receipt (`closedAt`) at ingest — two clocks, claim vs receipt.
+  if (note) resolution.note = note
+  if (runRef) resolution.run = runRef
+  // Machine-stamped, inside resolution so the fold can't collide with the raise ts.
   resolution.ts = nowIso()
 
   warnEatenDollar(resolution.chosen, resolution.note)
-  const line = {
-    id: askId,
-    status: withdrawn ? "withdrawn" : rejected ? "rejected" : "resolved",
-    resolution,
-  }
-  return { line, warnings }
+  const line = { id: askId, status, resolution }
+  appendJsonl("asks.jsonl", line)
+  const cite =
+    resolution.answer && newest
+      ? ` — ${status === "rejected" ? "acknowledging" : "acting on"} ${newest.by ?? "the"} reply${newest.chosen ? ` '${newest.chosen}'` : ""}`
+      : ""
+  console.log(`figs: ✓ ask ${askId} ${status}${cite}`)
+  await autoPush()
 }
 
 /**
@@ -1735,26 +1897,13 @@ async function askCmd() {
     console.log("figs:   tip: address asks with --to manager|builder so they route to the right person")
   }
   await autoPush()
+  // Local: the agent must put the ask in front of the human — nothing else
+  // surfaces it. When linked, the app surfaces it too.
   console.log(
-    "figs:   your human answers in the app — start your next session with `figs inbox` to read it",
+    isLinked()
+      ? "figs:   show this ask to your human (it's also in the app); record their reply with `figs answer`, read it back with `figs inbox`"
+      : "figs:   show this ask to your human in chat now — nothing else surfaces it. Record their reply with `figs answer`.",
   )
-}
-
-async function resolveCmd() {
-  requireFigs()
-  const askId = positional()
-  if (!askId) die("resolve needs the ask id: figs resolve <ask-id> [--chosen …] [--withdrawn]")
-  const { line, warnings } = await buildResolution(askId, {
-    chosen: flag("--chosen"),
-    by: flag("--by"),
-    note: flag("--note"),
-    withdrawn: hasFlag("--withdrawn"),
-    rejected: hasFlag("--rejected"),
-  })
-  for (const w of warnings) console.warn(`figs: ! ${w}`)
-  appendJsonl("asks.jsonl", line)
-  console.log(`figs: ✓ ask ${askId} ${line.status} — ${JSON.stringify(line)}`)
-  await autoPush()
 }
 
 /**
@@ -1787,6 +1936,7 @@ async function doctor() {
   const localIssues = validateOutbox(
     foldById(readJsonl("runs.jsonl")),
     foldById(readJsonl("asks.jsonl")),
+    readJsonl("messages.jsonl"),
   )
   if (localIssues.length) {
     console.log("figs: ✗ local validation issues:")
@@ -1807,6 +1957,7 @@ async function doctor() {
     agent: { ...agentJson, id: config.agentId },
     runs: foldById(readJsonl("runs.jsonl")),
     asks: foldById(readJsonl("asks.jsonl")),
+    messages: readJsonl("messages.jsonl"),
   })
   if (r.ok) {
     console.log("figs: ✓ .figs/ is valid — ready to push")
@@ -1866,6 +2017,8 @@ async function doPush() {
   const agent = { ...agentJson, id: config.agentId }
   const runs = foldById(readJsonl("runs.jsonl"))
   const asks = foldById(readJsonl("asks.jsonl"))
+  // Messages are immutable events — sent whole (no fold); the server dedupes by id.
+  const messages = readJsonl("messages.jsonl")
 
   // Local pre-flight — fail fast, offline, with teaching errors.
   const placeholders = findPlaceholders(agentJson)
@@ -1874,7 +2027,7 @@ async function doPush() {
       `agent.json still has template placeholders (${placeholders.map((p) => p.path).join(", ")}) — fill them in; \`figs doctor\` lists them`,
     )
   }
-  const issues = validateOutbox(runs, asks)
+  const issues = validateOutbox(runs, asks, messages)
   if (issues.length) return fail(`local validation failed:\n  ${issues.join("\n  ")}`)
 
   const base = endpoint.replace(/\/+$/, "")
@@ -1883,7 +2036,7 @@ async function doPush() {
     res = await fetchT(`${base}/api/ingest`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-figs-token": token },
-      body: JSON.stringify({ workspaceId: config.workspaceId, agent, runs, asks }),
+      body: JSON.stringify({ workspaceId: config.workspaceId, agent, runs, asks, messages }),
     })
   } catch (e) {
     // Network/timeout — transient; the records are safe locally.
@@ -1893,7 +2046,7 @@ async function doPush() {
   // 4xx = the payload is wrong (re-pushing won't help) → structural; 5xx = transient.
   if (!res.ok) return fail(`server rejected it (${res.status}): ${text}`, res.status >= 500)
   console.log(
-    `figs: ✓ pushed ${agent.name ?? agent.id} — ${runs.length} runs, ${asks.length} asks`,
+    `figs: ✓ pushed ${agent.name ?? agent.id} — ${runs.length} runs, ${asks.length} asks, ${messages.length} messages`,
   )
   // The wow-moment link — relay this to your human so they can see the agent.
   console.log(`       view at ${base}/w/${config.workspaceId}`)

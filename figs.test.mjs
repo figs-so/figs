@@ -610,67 +610,6 @@ test("ask --stdin takes a JSON object; flags still stamp and validate", async ()
   assert.ok(ask.id && ask.ts, "CLI stamps id + ts onto stdin asks")
 })
 
-test("resolve enforces verbatim --chosen with a did-you-mean", async () => {
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-bridge","ts":"2026-06-10T00:00:00Z","type":"question","title":"Bridge rule","options":["Strip the alpha prefix","Treat as out-of-scope"]}\n`,
-  )
-  const bad = await run(["resolve", "a-bridge", "--chosen", "strip the alpha prefix"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(bad.code, 1)
-  assert.match(bad.out, /did you mean "Strip the alpha prefix"\?/)
-
-  const good = await run(
-    ["resolve", "a-bridge", "--chosen", "Strip the alpha prefix", "--by", "Sarah", "--no-push"],
-    { cwd: repo, token: "t" },
-  )
-  assert.equal(good.code, 0, good.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.equal(fold.status, "resolved")
-  assert.deepEqual(unstampResolution(fold.resolution), {
-    chosen: "Strip the alpha prefix",
-    by: "Sarah",
-    via: "human",
-  })
-})
-
-test("resolve --withdrawn excludes --chosen and writes a withdrawn fold", async () => {
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-old","ts":"2026-06-10T00:00:00Z","type":"question","title":"Stuck"}\n`,
-  )
-  const conflict = await run(["resolve", "a-old", "--withdrawn", "--chosen", "x"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(conflict.code, 1)
-  assert.match(conflict.out, /can't combine with --withdrawn/)
-
-  const r = await run(["resolve", "a-old", "--withdrawn", "--note", "no longer needed", "--no-push"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(r.code, 0, r.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.equal(fold.status, "withdrawn")
-  assert.equal(fold.resolution.via, undefined, "withdrawn never claims a via")
-})
-
-test("resolve warns (but writes) when the ask isn't local", async () => {
-  const repo = await pushableRepo()
-  const r = await run(["resolve", "ghost-ask", "--note", "done", "--no-push"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /isn't in the local asks\.jsonl/)
-  assert.equal(lastLine(repo, "asks.jsonl").id, "ghost-ask")
-})
-
 test("report doesn't close asks — a close is not a job (resolve is the one closing verb)", async () => {
   const repo = await pushableRepo()
   const r = await run(
@@ -864,160 +803,6 @@ test("push refuses a hand-written run with a bogus state (lifecycle is enum'd)",
   assert.match(r.out, /state: "open" isn't valid/)
 })
 
-test("resolve --rejected records the human's no (terminal close, via human)", async () => {
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-no","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"Send the emails"}\n`,
-  )
-  const conflict = await run(["resolve", "a-no", "--rejected", "--withdrawn"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(conflict.code, 1)
-  assert.match(conflict.out, /different closes/)
-
-  const r = await run(
-    ["resolve", "a-no", "--rejected", "--by", "Sarah", "--note", "not this quarter", "--no-push"],
-    { cwd: repo, token: "t" },
-  )
-  assert.equal(r.code, 0, r.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.equal(fold.status, "rejected")
-  assert.deepEqual(unstampResolution(fold.resolution), {
-    by: "Sarah",
-    note: "not this quarter",
-    via: "human",
-  })
-})
-
-// ---------- figs inbox + the verified close (auto-cite) ---------------------
-
-import { createHash } from "node:crypto"
-
-const sha = (s) => createHash("sha256").update(s).digest("hex")
-const resetInbox = () => {
-  mock.inbox = { ok: true, truncated: false, asks: [] }
-  mock.rawArtifacts = new Map()
-}
-
-const inboxAsk = (over = {}) => ({
-  id: "ask-1",
-  type: "sign-off",
-  status: "open",
-  to: "manager",
-  title: "Send 10 payment reminders",
-  need: "Approve exactly these",
-  options: null,
-  details: [{ l: "Before executing", v: "SMTP creds · drafts <7d old" }],
-  refs: null,
-  ts: new Date(Date.now() - 7200000).toISOString(),
-  updatedAt: new Date(Date.now() - 7200000).toISOString(),
-  events: [],
-  ...over,
-})
-const approval = {
-  id: "ev-approve-1",
-  kind: "verdict",
-  verdict: "approved",
-  chosen: null,
-  text: "go ahead, BCC me on the big ones",
-  byName: "Sarah",
-  asRole: "manager",
-  createdAt: new Date(Date.now() - 3600000).toISOString(),
-}
-
-test("inbox lists sections with the exact next command per state", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.inbox.asks = [
-    inboxAsk({ id: "ask-ok", events: [approval] }),
-    inboxAsk({
-      id: "ask-no",
-      type: "question",
-      status: "rejected",
-      title: "Old question",
-      events: [
-        { ...approval, id: "ev-rej", verdict: "rejected", text: "not needed anymore" },
-      ],
-    }),
-    inboxAsk({ id: "ask-quiet", type: "question", title: "Stuck on creds", events: [] }),
-  ]
-  const r = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /1 answered · 1 rejected to acknowledge · 1 waiting on your human/)
-  assert.match(r.out, /approved by Sarah \(manager\)/)
-  assert.match(r.out, /"go ahead, BCC me on the big ones"/, "the human's words, verbatim")
-  assert.match(r.out, /nothing left to do → figs resolve ask-ok/)
-  assert.match(r.out, /real work → do the job, figs report it under its own --id/)
-  assert.match(r.out, /figs resolve ask-no --rejected/)
-  assert.match(r.out, /Stuck on creds \(raised /)
-})
-
-test("inbox renders a qualified verdict — verdict + chosen + note in one event", async () => {
-  // Sign-off options are answer paths: the human's verdict can cite one
-  // verbatim. One composed event carries all three; the inbox prints them
-  // together and the next-command suggests closing with that exact path.
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "ask-q",
-      options: ["Approved — file the 15", "Hold — wait for Capital Grille"],
-      events: [
-        {
-          ...approval,
-          id: "ev-q-1",
-          chosen: "Approved — file the 15",
-          text: "good catch on the duplicate",
-        },
-      ],
-    }),
-  ]
-  const r = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /approved by Sarah \(manager\)/)
-  assert.match(r.out, /→ "Approved — file the 15" · "good catch on the duplicate"/)
-  assert.match(r.out, /figs resolve ask-q --chosen 'Approved — file the 15'/)
-})
-
-test("inbox pre-fills --chosen with the cited option on answered asks", async () => {
-  // The one repeated E2E stumble: agents cited the NOTE text in --chosen. The
-  // next-command quotes the ACTUAL chosen option and routes the note to --note.
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "ask-d",
-      type: "question",
-      options: ["Strip the alpha prefix", "Use a mapping you provide"],
-      events: [
-        {
-          ...approval,
-          id: "ev-d-1",
-          kind: "answer",
-          verdict: null,
-          chosen: "Strip the alpha prefix",
-          text: "re-run November after",
-        },
-      ],
-    }),
-    inboxAsk({
-      id: "ask-t",
-      type: "question",
-      title: "Free-text question",
-      events: [
-        { ...approval, id: "ev-t-1", kind: "answer", verdict: null, chosen: null, text: "use UTC everywhere" },
-      ],
-    }),
-  ]
-  const r = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /figs resolve ask-d --chosen 'Strip the alpha prefix' --note '…'/)
-  assert.match(r.out, /figs resolve ask-t --note '…'/)
-  assert.doesNotMatch(r.out, /resolve ask-t --chosen/, "no --chosen placeholder for a text-only answer")
-})
-
 test("ask blocked teaches that it isn't an ask type (use a question)", async () => {
   const repo = await pushableRepo()
   const r = await run(["ask", "blocked", "--title", "Stuck on creds", "--no-push"], {
@@ -1073,244 +858,6 @@ test("readJsonl tolerates a crash-torn final line but dies on interior corruptio
   const bad = await run(["report", "--id", "r3", "--result", "next"], { cwd: repo2 })
   assert.notEqual(bad.code, 0)
   assert.match(bad.out, /malformed JSON in .figs\/runs.jsonl line 1/)
-})
-
-test("inbox is empty-friendly and honest about truncation", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  const empty = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.equal(empty.code, 0)
-  assert.match(empty.out, /inbox empty/)
-  mock.inbox.truncated = true
-  mock.inbox.asks = [inboxAsk({ id: "a", events: [approval] })]
-  const r = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.match(r.out, /more exist/)
-})
-
-test("inbox surfaces unfinished jobs — a crashed run resurfaces at session start", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.inbox.jobs = [
-    {
-      id: "recon-acme-2026-06",
-      result: "Statements pulled — matching now",
-      state: "in-flight",
-      ts: new Date(Date.now() - 2 * 86400000).toISOString(),
-      updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-    },
-  ]
-  const r = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /1 job in flight/)
-  assert.match(r.out, /Unfinished jobs — in flight/)
-  assert.match(r.out, /recon-acme-2026-06 — Statements pulled — matching now \(last update 2d ago\)/)
-  assert.match(r.out, /figs report --id recon-acme-2026-06/, "the settling verb is the next move")
-  // jobs alone keep the inbox non-empty
-  mock.inbox.asks = []
-  const only = await run(["inbox"], { cwd: repo, token: "t" })
-  assert.ok(!only.out.includes("inbox empty"), "an in-flight job is not an empty inbox")
-})
-
-test("inbox <id> prints the handoff package and restores refs (hash-verified)", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.rawArtifacts.set("previews.html", {
-    content: "<p>emails</p>",
-    hash: sha("<p>emails</p>"),
-  })
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "ask-pkg",
-      events: [approval],
-      refs: [{ label: "previews.html", artifact: "previews.html" }],
-    }),
-  ]
-  const r = await run(["inbox", "ask-pkg"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /THE THREAD/)
-  assert.match(r.out, /Before executing: SMTP creds/)
-  assert.match(r.out, /previews\.html \(fetched, hash ok\)/)
-  assert.equal(
-    readFileSync(join(repo, ".figs/artifacts/previews.html"), "utf8"),
-    "<p>emails</p>",
-  )
-  assert.match(r.out, /verify any prerequisites[\s\S]*figs resolve ask-pkg/)
-})
-
-test("inbox <id> never clobbers a local artifact with different bytes", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  mkdirSync(join(repo, ".figs/artifacts"), { recursive: true })
-  writeFileSync(join(repo, ".figs/artifacts/previews.html"), "<p>local work</p>")
-  mock.rawArtifacts.set("previews.html", {
-    content: "<p>server copy</p>",
-    hash: sha("<p>server copy</p>"),
-  })
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "ask-pkg2",
-      events: [approval],
-      refs: [{ label: "previews.html", artifact: "previews.html" }],
-    }),
-  ]
-  const r = await run(["inbox", "ask-pkg2"], { cwd: repo, token: "t" })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /exists locally with different content — left untouched/)
-  assert.equal(
-    readFileSync(join(repo, ".figs/artifacts/previews.html"), "utf8"),
-    "<p>local work</p>",
-  )
-})
-
-test("resolve auto-cites the answer event it acted on (via figs, verified)", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-cite","ts":"2026-06-11T00:00:00Z","type":"question","title":"Bridge rule","options":["Strip the alpha prefix","Out of scope"]}\n`,
-  )
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "a-cite",
-      type: "question",
-      title: "Bridge rule",
-      options: ["Strip the alpha prefix", "Out of scope"],
-      events: [
-        {
-          id: "ev-ans-7",
-          kind: "answer",
-          verdict: null,
-          chosen: "Strip the alpha prefix",
-          text: null,
-          byName: "Sarah",
-          asRole: "manager",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    }),
-  ]
-  const r = await run(
-    ["resolve", "a-cite", "--chosen", "Strip the alpha prefix", "--no-push"],
-    { cwd: repo, token: "t" },
-  )
-  assert.equal(r.code, 0, r.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(unstampResolution(fold.resolution), {
-    chosen: "Strip the alpha prefix",
-    via: "figs",
-    answer: "ev-ans-7",
-    by: "Sarah",
-  })
-})
-
-test("resolve auto-cites a qualified verdict by its chosen path", async () => {
-  // A verdict event may carry `chosen` (sign-off answer paths). The chosen-match
-  // search must find it — the cite is by text, not by event kind.
-  resetInbox()
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-qv","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"File May","options":["Approved — file the 15","Hold"]}\n`,
-  )
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "a-qv",
-      title: "File May",
-      options: ["Approved — file the 15", "Hold"],
-      events: [
-        { ...approval, id: "ev-old", chosen: null, text: "looking…", verdict: null, kind: "answer" },
-        { ...approval, id: "ev-qv-2", chosen: "Approved — file the 15", text: null },
-      ],
-    }),
-  ]
-  const r = await run(
-    ["resolve", "a-qv", "--chosen", "Approved — file the 15", "--no-push"],
-    { cwd: repo, token: "t" },
-  )
-  assert.equal(r.code, 0, r.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(unstampResolution(fold.resolution), {
-    chosen: "Approved — file the 15",
-    via: "figs",
-    answer: "ev-qv-2",
-    by: "Sarah",
-  })
-})
-
-test("resolve self-fetches an ask raised elsewhere, then folds the close onto it", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  mock.inbox.asks = [
-    inboxAsk({
-      id: "a-remote",
-      type: "question",
-      title: "Creds expired",
-      events: [
-        {
-          id: "ev-fix",
-          kind: "answer",
-          verdict: null,
-          chosen: null,
-          text: "rotated — try again",
-          byName: "Sarah",
-          asRole: "builder",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    }),
-  ]
-  const r = await run(["resolve", "a-remote", "--note", "unblocked", "--no-push"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(r.code, 0, r.out)
-  assert.match(r.out, /fetched "a-remote" from Figs/)
-  const lines = readLines(repo, "asks.jsonl")
-  const record = lines.find((l) => l.title === "Creds expired")
-  assert.ok(record, "the full record came home before the fold")
-  assert.equal(record.events, undefined, "server-only fields stripped")
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.equal(fold.status, "resolved")
-  assert.equal(fold.resolution.via, "figs")
-  assert.equal(fold.resolution.answer, "ev-fix")
-})
-
-test("resolve cites the approval it acted on (post-job close)", async () => {
-  resetInbox()
-  mock.lastIngest = null
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-go","ts":"2026-06-11T00:00:00Z","type":"sign-off","title":"Send 10 reminders"}\n`,
-  )
-  mock.inbox.asks = [inboxAsk({ id: "a-go", events: [approval] })]
-  const r = await run(["resolve", "a-go", "--note", "job reminders-2026-06"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(r.code, 0, r.out)
-  const askFold = mock.lastIngest.body.asks.find((a) => a.id === "a-go")
-  assert.equal(askFold.status, "resolved")
-  assert.equal(askFold.resolution.via, "figs")
-  assert.equal(askFold.resolution.answer, "ev-approve-1")
-  assert.equal(askFold.resolution.by, "Sarah")
-  assert.equal(askFold.resolution.note, "job reminders-2026-06")
-})
-
-test("resolve falls back to via human when the inbox has nothing (offline path)", async () => {
-  resetInbox()
-  const repo = await pushableRepo()
-  writeFileSync(
-    join(repo, ".figs/asks.jsonl"),
-    `{"id":"a-ob","ts":"2026-06-11T00:00:00Z","type":"question","title":"Stuck"}\n`,
-  )
-  const r = await run(["resolve", "a-ob", "--by", "Sarah", "--no-push"], {
-    cwd: repo,
-    token: "t",
-  })
-  assert.equal(r.code, 0, r.out)
-  const fold = lastLine(repo, "asks.jsonl")
-  assert.deepEqual(unstampResolution(fold.resolution), { by: "Sarah", via: "human" })
 })
 
 // ============================================================================
@@ -1434,4 +981,267 @@ test("no-account audit: the local surface works offline with no credentials", as
     const r = await run([...args], { cwd: repo, ...OFFLINE })
     assert.equal(r.code, code, `${args.join(" ")} → exit ${r.code}\n${r.out}`)
   }
+})
+
+// ============================================================================
+// Redesign — step 3: the data plane (messages.jsonl, answer, close matrix,
+// inbox local read, show). The ask → answer → close loop, fully local.
+// ============================================================================
+
+// ---------- figs answer — transcribe the human's reply ----------------------
+
+test("answer records a question's answer to messages.jsonl (source chat, minted id)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "bridge", "--title", "Bridge rule?", "--option", "Strip prefix"], { cwd: repo })
+  const r = await run(["answer", "bridge", "--chosen", "Strip prefix", "--by", "Sarah"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const m = lastLine(repo, "messages.jsonl")
+  assert.equal(m.kind, "answer")
+  assert.equal(m.ask, "bridge")
+  assert.equal(m.by, "Sarah")
+  assert.equal(m.chosen, "Strip prefix")
+  assert.equal(m.source, "chat")
+  assert.match(m.id, /^msg-/)
+  assert.ok(m.ts, "CLI stamps the ts")
+})
+
+test("answer requires --by (the human's name, not the agent's)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  const r = await run(["answer", "q", "--text", "do it"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /needs --by/)
+})
+
+test("answer dies if the ask isn't in this journal", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["answer", "ghost", "--text", "x", "--by", "Wayne"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /isn't in this journal/)
+})
+
+test("answer --chosen is verbatim-checked against the ask's options", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?", "--option", "Strip prefix"], { cwd: repo })
+  const r = await run(["answer", "q", "--chosen", "strip prefix", "--by", "W"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /did you mean "Strip prefix"/)
+})
+
+test("answer --approve records a verdict message", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "sign-off", "--id", "s", "--title", "ok?"], { cwd: repo })
+  const r = await run(["answer", "s", "--approve", "--by", "Wayne"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const m = lastLine(repo, "messages.jsonl")
+  assert.equal(m.kind, "verdict")
+  assert.equal(m.verdict, "approved")
+})
+
+// ---------- figs close — derives the close from the reply -------------------
+
+test("close derives 'resolved' from an answer and cites it", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "bridge", "--title", "?", "--option", "Strip prefix"], { cwd: repo })
+  await run(["answer", "bridge", "--chosen", "Strip prefix", "--by", "Sarah"], { cwd: repo })
+  const msgId = lastLine(repo, "messages.jsonl").id
+  const r = await run(["close", "bridge"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "resolved")
+  assert.equal(fold.resolution.via, "figs")
+  assert.equal(fold.resolution.answer, msgId, "cites the message it acted on")
+  assert.equal(fold.resolution.by, "Sarah")
+  assert.equal(fold.resolution.chosen, "Strip prefix")
+})
+
+test("close --run links the job the reply set in motion", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  await run(["answer", "q", "--text", "go", "--by", "W"], { cwd: repo })
+  await run(["report", "--id", "do-it", "--result", "done"], { cwd: repo })
+  const r = await run(["close", "q", "--run", "do-it"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(lastLine(repo, "asks.jsonl").resolution.run, "do-it")
+})
+
+test("close derives 'rejected' from a reject verdict", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "sign-off", "--id", "s", "--title", "ok?"], { cwd: repo })
+  await run(["answer", "s", "--reject", "--by", "Wayne"], { cwd: repo })
+  const r = await run(["close", "s"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(lastLine(repo, "asks.jsonl").status, "rejected")
+})
+
+test("close refuses when changes were requested (revise, don't close)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "sign-off", "--id", "s", "--title", "ok?"], { cwd: repo })
+  await run(["answer", "s", "--request-changes", "--by", "Wayne"], { cwd: repo })
+  const r = await run(["close", "s"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /changes were requested/)
+})
+
+test("close with no reply refuses with the teaching menu", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  const r = await run(["close", "q"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /no reply on file/)
+  assert.match(r.out, /figs answer q/)
+  assert.match(r.out, /--withdrawn/)
+})
+
+test("close --withdrawn ends an ask with no reply (the agent's own act)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  const r = await run(["close", "q", "--withdrawn"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.equal(lastLine(repo, "asks.jsonl").status, "withdrawn")
+})
+
+test("close --note with no reply records a self-cleared resolve (via self)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  const r = await run(["close", "q", "--note", "creds rotated themselves"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const fold = lastLine(repo, "asks.jsonl")
+  assert.equal(fold.status, "resolved")
+  assert.equal(fold.resolution.via, "self")
+  assert.equal(fold.resolution.note, "creds rotated themselves")
+})
+
+test("close teaches the migration when the old resolve flags are used", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?", "--option", "A"], { cwd: repo })
+  for (const [flag, hint] of [
+    ["--chosen", /figs answer/],
+    ["--rejected", /figs answer .* --reject/],
+    ["--answer-id", /auto-cites/],
+  ]) {
+    const r = await run(["close", "q", flag, "A"], { cwd: repo })
+    assert.equal(r.code, 1, `${flag} should be rejected`)
+    assert.match(r.out, hint)
+  }
+})
+
+// ---------- figs inbox + show (pure local reads) ----------------------------
+
+test("inbox is a pure local read — works offline with no account", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "Pick one", "--option", "A"], { cwd: repo })
+  await run(["answer", "q", "--chosen", "A", "--by", "Sarah"], { cwd: repo })
+  mock.lastIngest = null
+  const r = await run(["inbox"], { cwd: repo, ...OFFLINE })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /1 answered/)
+  assert.match(r.out, /q · question — Pick one/)
+  assert.match(r.out, /answered by Sarah/)
+  assert.match(r.out, /figs close q/)
+})
+
+test("inbox groups waiting asks and unfinished jobs", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "waiting", "--title", "no reply yet"], { cwd: repo })
+  await run(["checkpoint", "--id", "job1", "--note", "halfway"], { cwd: repo })
+  const r = await run(["inbox"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /waiting on your human/)
+  assert.match(r.out, /job1 — halfway/)
+  assert.match(r.out, /1 job in flight/)
+})
+
+test("inbox --json emits a structured, machine-readable view", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "?"], { cwd: repo })
+  await run(["answer", "q", "--text", "yes", "--by", "W"], { cwd: repo })
+  const r = await run(["inbox", "--json"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  const data = JSON.parse(r.out)
+  assert.equal(data.asks.length, 1)
+  assert.equal(data.asks[0].replies.length, 1)
+  assert.ok(data.sync, "carries a sync field for degraded-sync detection")
+})
+
+test("inbox is empty-friendly", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["inbox"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /inbox empty/)
+})
+
+test("show <ask-id> magnifies the ask + its thread (pure local)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "bridge", "--title", "Bridge rule?", "--option", "Strip prefix", "--found", "180 rows"], { cwd: repo })
+  await run(["answer", "bridge", "--chosen", "Strip prefix", "--by", "Sarah"], { cwd: repo })
+  const r = await run(["show", "bridge"], { cwd: repo, ...OFFLINE })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /Bridge rule\?/)
+  assert.match(r.out, /180 rows/)
+  assert.match(r.out, /THE THREAD/)
+  assert.match(r.out, /answered by Sarah/)
+})
+
+test("show <job-id> magnifies the job + its checkpoint trail", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["checkpoint", "--id", "recon", "--note", "pulled statements"], { cwd: repo })
+  await run(["report", "--id", "recon", "--result", "88% matched"], { cwd: repo })
+  const r = await run(["show", "recon"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /job recon/)
+  assert.match(r.out, /Trail/)
+  assert.match(r.out, /pulled statements/)
+  assert.match(r.out, /88% matched/)
+})
+
+test("show on an unknown id dies cleanly", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  const r = await run(["show", "nope"], { cwd: repo })
+  assert.equal(r.code, 1)
+  assert.match(r.out, /isn't a run or an ask/)
+})
+
+test("inbox <id> routes to show (back-compat alias)", async () => {
+  const repo = newRepo()
+  await run(["init"], { cwd: repo })
+  await run(["ask", "question", "--id", "q", "--title", "Routed?"], { cwd: repo })
+  const r = await run(["inbox", "q"], { cwd: repo })
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /Routed\?/)
+  assert.match(r.out, /THE THREAD|No reply yet/)
+})
+
+// ---------- push carries messages -------------------------------------------
+
+test("push sends messages alongside the spine", async () => {
+  mock.lastIngest = null
+  const repo = await pushableRepo() // linked
+  await run(["ask", "question", "--id", "q", "--title", "?", "--no-push"], { cwd: repo, token: "t" })
+  await run(["answer", "q", "--text", "yes", "--by", "Wayne", "--no-push"], { cwd: repo, token: "t" })
+  const r = await run(["push"], { cwd: repo, token: "t" })
+  assert.equal(r.code, 0, r.out)
+  assert.ok(Array.isArray(mock.lastIngest.body.messages), "ingest body carries messages[]")
+  assert.equal(mock.lastIngest.body.messages.at(-1).text, "yes")
+  assert.match(r.out, /messages/)
 })
